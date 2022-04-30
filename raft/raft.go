@@ -414,6 +414,8 @@ func (r *Raft) becomeLeader() {
 		Data:      nil,
 	})
 	r.bCastAppend()
+	// for only one node
+	r.advanceCommitIndex()
 }
 
 func (r *Raft) appendEntries(entries ...*pb.Entry) {
