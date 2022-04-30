@@ -104,7 +104,7 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
 	//return nil
-	if l.committed >= l.applied {
+	if len(l.entries) > 0 {
 		return l.entries[l.applied-l.firstIndex+1 : l.committed-l.firstIndex+1]
 	}
 	return nil
@@ -145,4 +145,13 @@ func (l *RaftLog) Entries(lo, hi uint64) []pb.Entry {
 	}
 	ents, _ := l.storage.Entries(lo, hi)
 	return ents
+}
+
+func (l *RaftLog) removeEntriesFrom(index uint64) {
+	// maybe remove stabled entries
+	l.stabled = min(index-1, l.stabled)
+	if index-l.firstIndex >= uint64(len(l.entries)) {
+		return
+	}
+	l.entries = l.entries[:index-l.firstIndex]
 }
