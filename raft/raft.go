@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"github.com/pingcap-incubator/tinykv/log"
 	"math/rand"
 	"sort"
 
@@ -170,7 +171,7 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
-	hardState, _, err := c.Storage.InitialState()
+	hardState, confState, err := c.Storage.InitialState()
 	if err != nil {
 		panic(err.Error())
 	}
@@ -187,12 +188,20 @@ func newRaft(c *Config) *Raft {
 		heartbeatTimeout: c.HeartbeatTick,
 		electionTimeout:  c.ElectionTick,
 	}
-	if hardState.Vote != c.ID {
+	if hardState.Vote == c.ID {
 		raft.Agreed = 1
 	}
-	for _, p := range c.peers {
-		raft.Prs[p] = &Progress{Match: 0, Next: 0}
+	if c.peers == nil {
+		c.peers = confState.Nodes
 	}
+
+	for _, p := range c.peers {
+		raft.Prs[p] = &Progress{
+			Match: 0,
+			Next:  0,
+		}
+	}
+	raft.resetElectionTimeout()
 	return raft
 }
 
@@ -318,6 +327,7 @@ func (r *Raft) tickHeartbeatElapsed() {
 
 func (r *Raft) tickElectionElapsed() {
 	r.electionElapsed++
+	//log.Debugf("%d electionElapsed: %d, realElectionTimeout: %d\n", r.id, r.electionElapsed, r.realElectionTimeout)
 	if r.electionElapsed == r.realElectionTimeout {
 		r.campaign()
 	}
@@ -376,6 +386,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Agreed = 0
 	r.Rejected = 0
 	r.resetTick()
+	log.Debugf("%d become follower, term: %d, lastIndex: %d\n", r.id, r.Term, r.RaftLog.LastIndex())
 }
 
 // becomeCandidate transform this peer's state to candidate
@@ -390,6 +401,7 @@ func (r *Raft) becomeCandidate() {
 	r.Rejected = 0
 	r.votes[r.id] = true
 	r.resetTick()
+	log.Infof("%d become candidate, term: %d, lastIndex: %d\n", r.id, r.Term, r.RaftLog.LastIndex())
 	//fmt.Printf("%d become candidate\n", r.id)
 	if r.Agreed > len(r.Prs)/2 {
 		r.becomeLeader()
@@ -400,6 +412,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	log.Infof("%d become Leader, Term: %d, lastIndex: %d\n", r.id, r.Term, r.RaftLog.LastIndex())
 	r.State = StateLeader
 	for _, v := range r.Prs {
 		v.Match = 0

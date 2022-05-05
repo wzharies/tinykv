@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"github.com/pingcap-incubator/tinykv/log"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -95,6 +96,7 @@ func NewRawNode(config *Config) (*RawNode, error) {
 
 // Tick advances the internal logical clock by a single tick.
 func (rn *RawNode) Tick() {
+	log.Debugf("%d node tick\n", rn.Raft.id)
 	rn.Raft.tick()
 }
 

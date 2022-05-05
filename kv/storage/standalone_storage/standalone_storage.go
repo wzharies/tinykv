@@ -46,13 +46,13 @@ type StandAloneStorageReader struct {
 	Txn *badger.Txn
 }
 
-func NewStandAloneStorageReader(db *badger.DB) StandAloneStorageReader {
+func NewStandAloneStorageReader(db *badger.DB) *StandAloneStorageReader {
 	txn := db.NewTransaction(false)
-	reader := StandAloneStorageReader{Txn: txn}
+	reader := &StandAloneStorageReader{Txn: txn}
 	return reader
 }
 
-func (r StandAloneStorageReader) GetCF(cf string, key []byte) ([]byte, error) {
+func (r *StandAloneStorageReader) GetCF(cf string, key []byte) ([]byte, error) {
 	value, err := engine_util.GetCFFromTxn(r.Txn, cf, key)
 	if err != nil {
 		if err == badger.ErrKeyNotFound {

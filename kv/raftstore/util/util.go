@@ -170,8 +170,9 @@ func CheckTerm(req *raft_cmdpb.RaftCmdRequest, term uint64) error {
 	if header.Term == 0 || term <= header.Term+1 {
 		return nil
 	}
-	// If header's term is 2 verions behind current term,
+	// If header's term is 2 versions behind current term,
 	// leadership may have been changed away.
+	// leader -> follower -> leader, term += 2
 	return &ErrStaleCommand{}
 }
 

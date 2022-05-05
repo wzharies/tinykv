@@ -195,10 +195,12 @@ func (m *MockSchedulerClient) GetRegion(ctx context.Context, key []byte) (*metap
 func (m *MockSchedulerClient) getRegionLocked(key []byte) (*metapb.Region, *metapb.Peer) {
 	result := m.findRegion(key)
 	if result == nil {
+		log.Debugf("can't find region")
 		return nil, nil
 	}
 
 	leader := m.leaders[result.region.GetId()]
+	//log.Infof("leader is %v\n", leader)
 	return &result.region, leader
 }
 
@@ -259,7 +261,7 @@ func (m *MockSchedulerClient) RegionHeartbeat(req *schedulerpb.RegionHeartbeatRe
 
 	m.Lock()
 	defer m.Unlock()
-
+	log.Debugf("region heart beat, region: %+v, leader: %d\n", req.Region, req.Leader.Id)
 	regionID := req.Region.GetId()
 	for _, p := range req.Region.GetPeers() {
 		delete(m.pendingPeers, p.GetId())
