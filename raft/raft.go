@@ -86,7 +86,7 @@ type Config struct {
 
 func (c *Config) validate() error {
 	if c.ID == None {
-		return errors.New("cannot use none as id")
+		return errors.New("cannot use none as Id")
 	}
 
 	if c.HeartbeatTick <= 0 {
@@ -111,7 +111,7 @@ type Progress struct {
 }
 
 type Raft struct {
-	id uint64
+	Id uint64
 
 	Term uint64
 	Vote uint64
@@ -133,7 +133,7 @@ type Raft struct {
 	// msgs need to send
 	msgs []pb.Message
 
-	// the leader id
+	// the leader Id
 	Lead uint64
 
 	// heartbeat interval, should send
@@ -149,7 +149,7 @@ type Raft struct {
 	// valid message from current leader when it is a follower.
 	electionElapsed int
 
-	// leadTransferee is id of the leader transfer target when its value is not zero.
+	// leadTransferee is Id of the leader transfer target when its value is not zero.
 	// Follow the procedure defined in section 3.10 of Raft phd thesis.
 	// (https://web.stanford.edu/~ouster/cgi-bin/papers/OngaroPhD.pdf)
 	// (Used in 3A leader transfer)
@@ -176,7 +176,7 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	raft := &Raft{
-		id:               c.ID,
+		Id:               c.ID,
 		Term:             hardState.Term,
 		Vote:             hardState.Vote,
 		RaftLog:          newLog(c.Storage),
@@ -238,10 +238,14 @@ func (r *Raft) sendAppend(to uint64) bool {
 			Data:      e.Data,
 		})
 	}
+	//if len(sendEntries) > 0 {
+	//log.Infof("%d send index [%d %d] to %d\n", r.Id, sendEntries[0].Index, sendEntries[len(sendEntries)-1].Index, to)
+	//}
+
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgAppend,
 		To:      to,
-		From:    r.id,
+		From:    r.Id,
 		Term:    r.Term,
 		LogTerm: preLogTerm,
 		Index:   preLogIndex,
@@ -256,7 +260,7 @@ func (r *Raft) sendAppendResp(to uint64, reject bool, matched uint64) {
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgAppendResponse,
 		To:      to,
-		From:    r.id,
+		From:    r.Id,
 		Term:    r.Term,
 		Reject:  reject,
 		Index:   matched,
@@ -269,7 +273,7 @@ func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgHeartbeat,
-		From:    r.id,
+		From:    r.Id,
 		To:      to,
 		Term:    r.Term,
 	}
@@ -279,7 +283,7 @@ func (r *Raft) sendHeartbeat(to uint64) {
 func (r *Raft) sendHeartbeatResp(to uint64, reject bool) {
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgHeartbeatResponse,
-		From:    r.id,
+		From:    r.Id,
 		To:      to,
 		Term:    r.Term,
 		Index:   r.RaftLog.LastIndex(),
@@ -291,7 +295,7 @@ func (r *Raft) sendHeartbeatResp(to uint64, reject bool) {
 func (r *Raft) sendVoteResp(to uint64, reject bool) {
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgRequestVoteResponse,
-		From:    r.id,
+		From:    r.Id,
 		To:      to,
 		Term:    r.Term,
 		Reject:  reject,
@@ -327,22 +331,22 @@ func (r *Raft) tickHeartbeatElapsed() {
 
 func (r *Raft) tickElectionElapsed() {
 	r.electionElapsed++
-	//log.Debugf("%d electionElapsed: %d, realElectionTimeout: %d\n", r.id, r.electionElapsed, r.realElectionTimeout)
-	if r.electionElapsed == r.realElectionTimeout {
+	//log.Debugf("%d electionElapsed: %d, realElectionTimeout: %d\n", r.Id, r.electionElapsed, r.realElectionTimeout)
+	if r.electionElapsed >= r.realElectionTimeout {
 		r.campaign()
 	}
 }
 
 // to be candidate
 func (r *Raft) campaign() {
-	//fmt.Printf("%d campaign\n", r.id)
+	//fmt.Printf("%d campaign\n", r.Id)
 	r.becomeCandidate()
 	r.bCastVoteReq()
 }
 
 func (r *Raft) bCastAppend() {
 	for peer := range r.Prs {
-		if peer != r.id {
+		if peer != r.Id {
 			r.sendAppend(peer)
 		}
 	}
@@ -350,23 +354,23 @@ func (r *Raft) bCastAppend() {
 
 func (r *Raft) bCastHeartbeat() {
 	for peer := range r.Prs {
-		if peer != r.id {
+		if peer != r.Id {
 			r.sendHeartbeat(peer)
 		}
 	}
 }
 
 func (r *Raft) bCastVoteReq() {
-	//fmt.Printf("%d vote req\n", r.id)
+	//fmt.Printf("%d vote req\n", r.Id)
 	lastIndex := r.RaftLog.LastIndex()
 	lastTerm := mustTerm(r.RaftLog.Term(lastIndex))
 
 	for peer := range r.Prs {
-		if peer != r.id {
+		if peer != r.Id {
 			msg := pb.Message{
 				MsgType: pb.MessageType_MsgRequestVote,
 				To:      peer,
-				From:    r.id,
+				From:    r.Id,
 				Term:    r.Term,
 				LogTerm: lastTerm,
 				Index:   lastIndex,
@@ -386,7 +390,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Agreed = 0
 	r.Rejected = 0
 	r.resetTick()
-	log.Debugf("%d become follower, term: %d, lastIndex: %d\n", r.id, r.Term, r.RaftLog.LastIndex())
+	//log.Infof("%d become follower, term: %d, lastIndex: %d\n", r.Id, r.Term, r.RaftLog.LastIndex())
 }
 
 // becomeCandidate transform this peer's state to candidate
@@ -394,15 +398,15 @@ func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
 	r.State = StateCandidate
 	r.Term += 1
-	r.Vote = r.id
+	r.Vote = r.Id
 	// make sure clean previous votes
 	r.votes = make(map[uint64]bool)
 	r.Agreed = 1
 	r.Rejected = 0
-	r.votes[r.id] = true
+	r.votes[r.Id] = true
 	r.resetTick()
-	log.Infof("%d become candidate, term: %d, lastIndex: %d\n", r.id, r.Term, r.RaftLog.LastIndex())
-	//fmt.Printf("%d become candidate\n", r.id)
+	log.Infof("%d become candidate, term: %d, lastIndex: %d\n", r.Id, r.Term, r.RaftLog.LastIndex())
+	//fmt.Printf("%d become candidate\n", r.Id)
 	if r.Agreed > len(r.Prs)/2 {
 		r.becomeLeader()
 	}
@@ -412,7 +416,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
-	log.Infof("%d become Leader, Term: %d, lastIndex: %d\n", r.id, r.Term, r.RaftLog.LastIndex())
+	log.Infof("%d become leader, Term: %d, lastIndex: %d\n", r.Id, r.Term, r.RaftLog.LastIndex())
 	r.State = StateLeader
 	for _, v := range r.Prs {
 		v.Match = 0
@@ -442,8 +446,8 @@ func (r *Raft) appendEntries(entries ...*pb.Entry) {
 		})
 	}
 	r.RaftLog.appendEntries(es...)
-	r.Prs[r.id].Match = r.RaftLog.LastIndex()
-	r.Prs[r.id].Next = r.RaftLog.LastIndex() + 1
+	r.Prs[r.Id].Match = r.RaftLog.LastIndex()
+	r.Prs[r.Id].Next = r.RaftLog.LastIndex() + 1
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -642,13 +646,14 @@ func (r *Raft) handleHeartbeatResp(m pb.Message) {
 }
 
 func (r *Raft) handleVoteResp(m pb.Message) {
-	//fmt.Printf("%d handle voteResp: %+v\n", r.id, m)
+	//fmt.Printf("%d handle voteResp: %+v\n", r.Id, m)
 	if m.Term > r.Term {
 		r.becomeFollower(m.Term, m.From)
 		r.Vote = m.From
 		return
 	}
 	if !m.Reject {
+		log.Infof("%d receive agree from %d\n", r.Id, m.From)
 		r.votes[m.From] = true
 		r.Agreed += 1
 	} else {
@@ -663,7 +668,7 @@ func (r *Raft) handleVoteResp(m pb.Message) {
 }
 
 func (r *Raft) handleVote(m pb.Message) {
-	//fmt.Printf("%d handle vote %+v\n", r.id, m)
+	//fmt.Printf("%d handle vote %+v\n", r.Id, m)
 	// req term is lower
 	if r.Term > m.Term {
 		r.sendVoteResp(m.From, true)

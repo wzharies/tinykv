@@ -101,11 +101,11 @@ func networkchaos(t *testing.T, cluster *Cluster, ch chan bool, done *int32, unr
 				}
 			}
 			cluster.ClearFilters()
-			log.Infof("partition: %v, %v", pa[0], pa[1])
 			cluster.AddFilter(&PartitionFilter{
 				s1: pa[0],
 				s2: pa[1],
 			})
+			log.Infof("partition: %v, %v", pa[0], pa[1])
 		}
 
 		if unreliable {
@@ -373,6 +373,7 @@ func TestOnePartition2B(t *testing.T) {
 		s1: s1,
 		s2: s2,
 	})
+	//log.Infof("majority: %+v, minority: %+v\n", s1, s2)
 	cluster.MustPut([]byte("k1"), []byte("v1"))
 	cluster.MustGet([]byte("k1"), []byte("v1"))
 	MustGetNone(cluster.engines[s2[0]], []byte("k1"))
@@ -386,6 +387,7 @@ func TestOnePartition2B(t *testing.T) {
 		s1: s1,
 		s2: s2,
 	})
+	//log.Infof("majority: %+v, minority: %+v\n", s2, s1)
 	cluster.MustGet([]byte("k1"), []byte("v1"))
 	cluster.MustPut([]byte("k1"), []byte("changed"))
 	MustGetEqual(cluster.engines[s1[0]], []byte("k1"), []byte("v1"))

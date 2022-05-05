@@ -147,7 +147,7 @@ func testNonleaderStartElection(t *testing.T, state StateType) {
 	if r.State != StateCandidate {
 		t.Errorf("state = %s, want %s", r.State, StateCandidate)
 	}
-	if !r.votes[r.id] {
+	if !r.votes[r.Id] {
 		t.Errorf("vote for self = false, want true")
 	}
 	msgs := r.readMessages()
@@ -892,7 +892,7 @@ func commitNoopEntry(r *Raft, s *MemoryStorage) {
 		panic("it should only be used when it is the leader")
 	}
 	for id := range r.Prs {
-		if id == r.id {
+		if id == r.Id {
 			continue
 		}
 

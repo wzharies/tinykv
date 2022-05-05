@@ -49,7 +49,7 @@ func TestRawNodeProposeAndConfChange3A(t *testing.T) {
 
 	rawNode.Campaign()
 	rd = rawNode.Ready()
-	if rd.SoftState.Lead != rawNode.Raft.id {
+	if rd.SoftState.Lead != rawNode.Raft.Id {
 		t.Fatalf("expected become leader")
 	}
 
@@ -95,7 +95,7 @@ func TestRawNodeProposeAddDuplicateNode3A(t *testing.T) {
 	for {
 		rd = rawNode.Ready()
 		s.Append(rd.Entries)
-		if rd.SoftState.Lead == rawNode.Raft.id {
+		if rd.SoftState.Lead == rawNode.Raft.Id {
 			rawNode.Advance(rd)
 			break
 		}

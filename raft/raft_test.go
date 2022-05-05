@@ -63,7 +63,7 @@ func TestProgressLeader2AB(t *testing.T) {
 	// Send proposals to r1. The first 5 entries should be appended to the log.
 	propMsg := pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("foo")}}}
 	for i := 0; i < 5; i++ {
-		if pr := r.Prs[r.id]; pr.Match != uint64(i+1) || pr.Next != pr.Match+1 {
+		if pr := r.Prs[r.Id]; pr.Match != uint64(i+1) || pr.Next != pr.Match+1 {
 			t.Errorf("unexpected progress %v", pr)
 		}
 		if err := r.Step(propMsg); err != nil {
@@ -109,13 +109,13 @@ func TestLeaderCycle2AA(t *testing.T) {
 
 		for _, peer := range n.peers {
 			sm := peer.(*Raft)
-			if sm.id == campaignerID && sm.State != StateLeader {
+			if sm.Id == campaignerID && sm.State != StateLeader {
 				t.Errorf("campaigning node %d state = %v, want StateLeader",
-					sm.id, sm.State)
-			} else if sm.id != campaignerID && sm.State != StateFollower {
+					sm.Id, sm.State)
+			} else if sm.Id != campaignerID && sm.State != StateFollower {
 				t.Errorf("after campaign of node %d, "+
 					"node %d had state = %v, want StateFollower",
-					campaignerID, sm.id, sm.State)
+					campaignerID, sm.Id, sm.State)
 			}
 		}
 	}
@@ -1557,7 +1557,7 @@ type network struct {
 
 // newNetwork initializes a network from peers.
 // A nil node will be replaced with a new *stateMachine.
-// A *stateMachine will get its k, id.
+// A *stateMachine will get its k, Id.
 // When using stateMachine, the address list is always [1, n].
 func newNetwork(peers ...stateMachine) *network {
 	return newNetworkWithConfig(nil, peers...)
@@ -1584,7 +1584,7 @@ func newNetworkWithConfig(configFunc func(*Config), peers ...stateMachine) *netw
 			sm := newRaft(cfg)
 			npeers[id] = sm
 		case *Raft:
-			v.id = id
+			v.Id = id
 			npeers[id] = v
 		case *blackHole:
 			npeers[id] = v

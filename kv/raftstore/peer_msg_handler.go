@@ -55,9 +55,12 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	if err != nil {
 		panic(err)
 	}
+	//log.Debugf("handle messages %v\n", ready.Messages)
 	d.Send(d.ctx.trans, ready.Messages)
 	// apply committed entris
 	if len(ready.CommittedEntries) > 0 {
+		//log.Infof("%d handle ready committed entries: [%d %d]\n", d.RaftGroup.Raft.Id,
+		//	ready.CommittedEntries[0].Index, ready.CommittedEntries[len(ready.CommittedEntries)-1].Index)
 		writeBatch := &engine_util.WriteBatch{}
 		for _, entry := range ready.CommittedEntries {
 			writeBatch = d.applyEntry(entry, writeBatch)
@@ -67,6 +70,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		}
 
 		d.peerStorage.applyState.AppliedIndex = ready.CommittedEntries[len(ready.CommittedEntries)-1].Index
+		//log.Infof("%d apply to index %d\n", d.RaftGroup.Raft.Id, d.peerStorage.applyState.AppliedIndex)
 		writeBatch.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
 		writeBatch.WriteToDB(d.peerStorage.Engines.Kv)
 	}
@@ -76,6 +80,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 func (d *peerMsgHandler) applyEntry(entry eraftpb.Entry, wb *engine_util.WriteBatch) *engine_util.WriteBatch {
 	// noop entry
 	if entry.Data == nil {
+		//log.Infof("empty entry")
 		return wb
 	}
 	req := &raft_cmdpb.Request{}
@@ -98,6 +103,15 @@ func (d *peerMsgHandler) applyNormalRequest(entry eraftpb.Entry, req *raft_cmdpb
 		}
 	}
 
+	// proposals only on the peer that were leader when proposed
+	switch req.CmdType {
+	case raft_cmdpb.CmdType_Put:
+		wb.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
+	case raft_cmdpb.CmdType_Delete:
+		wb.DeleteCF(req.Delete.Cf, req.Delete.Key)
+	}
+
+	// leader and previous leaders can handle proposals
 	d.handleProposal(entry, func(p *proposal) {
 		resp := &raft_cmdpb.RaftCmdResponse{
 			Header: &raft_cmdpb.RaftResponseHeader{},
@@ -113,6 +127,7 @@ func (d *peerMsgHandler) applyNormalRequest(entry eraftpb.Entry, req *raft_cmdpb
 			if err != nil {
 				value = nil
 			}
+			//log.Infof("%d apply get key %v value %v, apply index %v\n", d.RaftGroup.Raft.Id, key, value, entry.Index)
 			resp.Responses = []*raft_cmdpb.Response{
 				{
 					CmdType: raft_cmdpb.CmdType_Get,
@@ -121,9 +136,10 @@ func (d *peerMsgHandler) applyNormalRequest(entry eraftpb.Entry, req *raft_cmdpb
 					},
 				},
 			}
+			// new wb, prevent duplicate writes
 			wb = &engine_util.WriteBatch{}
 		case raft_cmdpb.CmdType_Put:
-			wb.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
+			//log.Infof("%d apply put key %s\n", d.RaftGroup.Raft.Id, key)
 			resp.Responses = []*raft_cmdpb.Response{
 				{
 					CmdType: raft_cmdpb.CmdType_Put,
@@ -131,7 +147,6 @@ func (d *peerMsgHandler) applyNormalRequest(entry eraftpb.Entry, req *raft_cmdpb
 				},
 			}
 		case raft_cmdpb.CmdType_Delete:
-			wb.DeleteCF(req.Delete.Cf, req.Delete.Key)
 			resp.Responses = []*raft_cmdpb.Response{
 				{
 					CmdType: raft_cmdpb.CmdType_Delete,
@@ -159,6 +174,7 @@ func (d *peerMsgHandler) handleProposal(entry eraftpb.Entry, handler func(propos
 	p := d.proposals[0]
 	if p.index == entry.Index {
 		if p.term != entry.Term {
+			// this proposal is now one a follower
 			// the log entry has been overwritten by new leader
 			NotifyStaleReq(entry.Term, p.cb)
 		} else {
@@ -258,11 +274,12 @@ func (d *peerMsgHandler) proposeCommonRaftCommand(msg *raft_cmdpb.RaftCmdRequest
 			return
 		}
 	}
-	log.Debugf("peer %d propose key: %v, req: %v", d.peer.PeerId(), key, req)
+	//log.Debugf("peer %d propose key: %v, req: %v", d.peer.PeerId(), key, req)
 	data, err := req.Marshal()
 	if err != nil {
 		panic(err)
 	}
+	//log.Infof("%d proposal req: %+v\n", d.RaftGroup.Raft.Id, req)
 	d.proposals = append(d.proposals, &proposal{
 		index: d.nextProposalIndex(),
 		term:  d.Term(),

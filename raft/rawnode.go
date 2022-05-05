@@ -16,8 +16,6 @@ package raft
 
 import (
 	"errors"
-	"github.com/pingcap-incubator/tinykv/log"
-
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -96,7 +94,6 @@ func NewRawNode(config *Config) (*RawNode, error) {
 
 // Tick advances the internal logical clock by a single tick.
 func (rn *RawNode) Tick() {
-	log.Debugf("%d node tick\n", rn.Raft.id)
 	rn.Raft.tick()
 }
 
@@ -112,7 +109,7 @@ func (rn *RawNode) Propose(data []byte) error {
 	ent := pb.Entry{Data: data}
 	return rn.Raft.Step(pb.Message{
 		MsgType: pb.MessageType_MsgPropose,
-		From:    rn.Raft.id,
+		From:    rn.Raft.Id,
 		Entries: []*pb.Entry{&ent}})
 }
 
@@ -167,7 +164,7 @@ func (rn *RawNode) Ready() Ready {
 
 	if len(rn.Raft.msgs) > 0 {
 		rd.Messages = rn.Raft.msgs
-		rn.Raft.msgs = make([]pb.Message, 10)
+		rn.Raft.msgs = make([]pb.Message, 0, 100)
 	}
 	if rn.SoftState.RaftState != rn.Raft.State || rn.SoftState.Lead != rn.Raft.Lead {
 		rn.SoftState.RaftState = rn.Raft.State
