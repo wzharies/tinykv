@@ -86,8 +86,19 @@ func newLog(storage Storage) *RaftLog {
 // We need to compact the log entries in some point of time like
 // storage compact stabled log entries prevent the log entries
 // grow unlimitedly in memory
+// delete compacted entries in l.entries
 func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
+	if len(l.entries) < 0 {
+		return
+	}
+	newFirstIndex, _ := l.storage.FirstIndex()
+	if newFirstIndex > l.firstIndex {
+		entries := l.entries[newFirstIndex-l.firstIndex:]
+		l.entries = make([]pb.Entry, len(entries))
+		copy(l.entries, entries)
+		l.firstIndex = newFirstIndex
+	}
 }
 
 // unstableEntries return all the unstable entries
@@ -118,6 +129,9 @@ func (l *RaftLog) LastIndex() uint64 {
 		return l.entries[len(l.entries)-1].Index
 	}
 	index, _ := l.storage.LastIndex()
+	if !IsEmptySnap(l.pendingSnapshot) {
+		index = max(index, l.pendingSnapshot.Metadata.Index)
+	}
 	return index
 }
 
@@ -131,7 +145,16 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 		}
 		return l.entries[i-l.firstIndex].Term, nil
 	}
-	return l.storage.Term(i)
+	term, err := l.storage.Term(i)
+	if err == ErrUnavailable && !IsEmptySnap(l.pendingSnapshot) {
+		if i == l.pendingSnapshot.Metadata.Index {
+			return l.pendingSnapshot.Metadata.Term, nil
+		}
+		if i < l.pendingSnapshot.Metadata.Index {
+			return term, ErrCompacted
+		}
+	}
+	return term, err
 }
 
 func (l *RaftLog) appendEntries(entries ...pb.Entry) {

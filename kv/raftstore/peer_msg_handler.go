@@ -5,6 +5,7 @@ import (
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
 	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"reflect"
 	"time"
 
 	"github.com/Connor1996/badger/y"
@@ -51,9 +52,19 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	}
 	ready := d.RaftGroup.Ready()
 	// save unstable entries and RaftLocalState
-	_, err := d.peerStorage.SaveReadyState(&ready)
+	result, err := d.peerStorage.SaveReadyState(&ready)
 	if err != nil {
 		panic(err)
+	}
+	// update region info
+	if result != nil && !reflect.DeepEqual(result.PrevRegion, result.Region) {
+		d.peerStorage.SetRegion(result.Region)
+		storeMeta := d.ctx.storeMeta
+		storeMeta.Lock()
+		storeMeta.regions[result.Region.GetId()] = result.Region
+		storeMeta.regionRanges.Delete(&regionItem{region: result.PrevRegion})
+		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: result.Region})
+		storeMeta.Unlock()
 	}
 	//log.Debugf("handle messages %v\n", ready.Messages)
 	d.Send(d.ctx.trans, ready.Messages)
@@ -83,15 +94,40 @@ func (d *peerMsgHandler) applyEntry(entry eraftpb.Entry, wb *engine_util.WriteBa
 		//log.Infof("empty entry")
 		return wb
 	}
-	req := &raft_cmdpb.Request{}
+	req := &raft_cmdpb.RaftCmdRequest{}
 	err := req.Unmarshal(entry.Data)
 	if err != nil {
 		panic(err)
 	}
-	return d.applyNormalRequest(entry, req, wb)
+	if req.AdminRequest != nil {
+		return d.applyAdminRequest(entry, req, wb)
+	}
+	if len(req.Requests) > 0 {
+		return d.applyBasicRequest(entry, req, wb)
+	}
+	return nil
 }
 
-func (d *peerMsgHandler) applyNormalRequest(entry eraftpb.Entry, req *raft_cmdpb.Request, wb *engine_util.WriteBatch) *engine_util.WriteBatch {
+func (d *peerMsgHandler) applyAdminRequest(entry eraftpb.Entry, msg *raft_cmdpb.RaftCmdRequest,
+	wb *engine_util.WriteBatch) *engine_util.WriteBatch {
+	req := msg.AdminRequest
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		compact := req.GetCompactLog()
+		applyState := d.peerStorage.applyState
+		if compact.CompactIndex > applyState.TruncatedState.Index {
+			// update truncated state
+			applyState.TruncatedState.Index = compact.CompactIndex
+			applyState.TruncatedState.Term = compact.CompactTerm
+			wb.SetMeta(meta.ApplyStateKey(d.regionId), applyState)
+		}
+	}
+	return wb
+}
+
+func (d *peerMsgHandler) applyBasicRequest(entry eraftpb.Entry, msg *raft_cmdpb.RaftCmdRequest,
+	wb *engine_util.WriteBatch) *engine_util.WriteBatch {
+	req := msg.Requests[0]
 	key := getRequestedKey(req)
 	if key != nil {
 		err := util.CheckKeyInRegion(key, d.Region())
@@ -254,15 +290,27 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 	}
 
 	if msg.AdminRequest != nil {
-		// TODO
+		d.proposeAdminRequest(msg, cb)
 	} else {
-		d.proposeCommonRaftCommand(msg, cb)
+		d.proposeBasicRaftCommand(msg, cb)
 	}
 
 	// Your Code Here (2B).
 }
 
-func (d *peerMsgHandler) proposeCommonRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+func (d *peerMsgHandler) proposeAdminRequest(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+	req := msg.AdminRequest
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		data, err := msg.Marshal()
+		if err != nil {
+			panic(err)
+		}
+		d.RaftGroup.Propose(data)
+	}
+}
+
+func (d *peerMsgHandler) proposeBasicRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
 
 	// only one req per call from high-level get/put/delete
 	req := msg.Requests[0]
@@ -275,7 +323,7 @@ func (d *peerMsgHandler) proposeCommonRaftCommand(msg *raft_cmdpb.RaftCmdRequest
 		}
 	}
 	//log.Debugf("peer %d propose key: %v, req: %v", d.peer.PeerId(), key, req)
-	data, err := req.Marshal()
+	data, err := msg.Marshal()
 	if err != nil {
 		panic(err)
 	}
