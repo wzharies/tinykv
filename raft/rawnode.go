@@ -157,10 +157,20 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
+	//if rn.Raft.RaftLog.applied > rn.Raft.RaftLog.committed {
+	//	log.Errorf("%d applied %d great than committed %d\n", rn.Raft.Id, rn.Raft.RaftLog.applied, rn.Raft.RaftLog.committed)
+	//}
 	rd := Ready{
 		Entries:          rn.Raft.RaftLog.unstableEntries(),
 		CommittedEntries: rn.Raft.RaftLog.nextEnts(),
 	}
+
+	//if len(rd.CommittedEntries) > 0 {
+	//	log.Infof("%d try to committed %d [%d %d], commit %d, commit index %d\n",
+	//		rn.Raft.Id, len(rd.CommittedEntries), rd.CommittedEntries[0].Index,
+	//		rd.CommittedEntries[len(rd.CommittedEntries)-1].Index, rn.Raft.RaftLog.committed,
+	//		rn.Raft.RaftLog.entries[rn.Raft.RaftLog.committed-rn.Raft.RaftLog.FirstIndex()].Index)
+	//}
 
 	if len(rn.Raft.msgs) > 0 {
 		rd.Messages = rn.Raft.msgs
@@ -218,6 +228,7 @@ func (rn *RawNode) Advance(rd Ready) {
 		rn.Raft.RaftLog.stabled = rd.Entries[len(rd.Entries)-1].Index
 	}
 	if len(rd.CommittedEntries) > 0 {
+		//log.Infof("%d applied %d\n", rn.Raft.Id, rd.CommittedEntries[len(rd.CommittedEntries)-1].Index)
 		rn.Raft.RaftLog.applied = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
 	}
 	// if hardState has changed and be applied
