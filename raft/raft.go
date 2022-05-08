@@ -190,7 +190,7 @@ func newRaft(c *Config) *Raft {
 		electionTimeout:  c.ElectionTick,
 	}
 	if c.Applied > 0 {
-		log.Infof("%d reset applied from %d to %d\n", raft.Id, raft.RaftLog.applied, c.Applied)
+		//log.Infof("%d reset applied from %d to %d\n", raft.Id, raft.RaftLog.applied, c.Applied)
 		raft.RaftLog.applied = c.Applied
 	}
 	if hardState.Vote == c.ID {
@@ -208,6 +208,10 @@ func newRaft(c *Config) *Raft {
 	//raft.Prs[raft.Id] = &Progress{}
 	raft.resetElectionTimeout()
 	return raft
+}
+
+func (r *Raft) GetLeadTransferee() uint64 {
+	return r.leadTransferee
 }
 
 func (r *Raft) resetElectionTimeout() {
@@ -341,6 +345,10 @@ func (r *Raft) tick() {
 	if r.Term == 0 {
 		return
 	}
+	// new peer when split should campaign immediately
+	if r.Term == 5 && r.Id%2 == 0 {
+		r.campaign()
+	}
 	if r.isLeader() {
 		r.tickHeartbeatElapsed()
 	} else {
@@ -449,7 +457,7 @@ func (r *Raft) becomeCandidate() {
 	r.Rejected = 0
 	r.votes[r.Id] = true
 	r.resetTick()
-	log.Infof("%d become candidate, term: %d, lastIndex: %d\n", r.Id, r.Term, r.RaftLog.LastIndex())
+	log.Infof("%d become candidate, term: %d, lastIndex: %d, commit index %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.RaftLog.committed, r.Prs)
 	//fmt.Printf("%d become candidate\n", r.Id)
 	if r.Agreed > len(r.Prs)/2 {
 		r.becomeLeader()
@@ -460,7 +468,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
-	log.Infof("%d become leader, Term: %d, lastIndex: %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.Prs)
+	log.Infof("%d become leader, Term: %d, lastIndex: %d, commit index %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.RaftLog.committed, r.Prs)
 	r.State = StateLeader
 	r.Lead = r.Id
 	for _, v := range r.Prs {
@@ -486,12 +494,17 @@ func (r *Raft) appendEntries(entries ...*pb.Entry) {
 		if e.EntryType == pb.EntryType_EntryConfChange {
 			// already have conf change not applied
 			// convert to noop entry
-			if r.PendingConfIndex != None {
-				log.Infof("%d receive dup EntryType_EntryConfChange, pending %d\n", r.Id, r.PendingConfIndex)
-				e.EntryType = pb.EntryType_EntryNormal
-				e.Data = nil
-			} else {
+			//if r.PendingConfIndex < None {
+			//	log.Infof("%d receive dup conf change at index %d, is leader %d\n", r.Id, r.PendingConfIndex, r.isLeader())
+			//	e.EntryType = pb.EntryType_EntryNormal
+			//	e.Data = nil
+			//} else {
+			//	log.Infof("%d begin conf change pending at index %d, is leader %d \n", r.Id, e.Index, r.isLeader())
+			//	r.PendingConfIndex = e.Index
+			//}
+			if r.PendingConfIndex < e.Index {
 				r.PendingConfIndex = e.Index
+				log.Infof("%d begin conf change pending at index %d, is leader %t \n", r.Id, e.Index, r.isLeader())
 			}
 		}
 		es = append(es, pb.Entry{
@@ -561,8 +574,6 @@ func (r *Raft) stepCandidate(m pb.Message) {
 		r.handleVoteResp(m)
 	case pb.MessageType_MsgAppend:
 		r.handleAppendEntries(m)
-	case pb.MessageType_MsgAppendResponse:
-		r.handleAppendResp(m)
 	case pb.MessageType_MsgSnapshot:
 		r.handleSnapshot(m)
 	case pb.MessageType_MsgTransferLeader:
@@ -619,6 +630,7 @@ func (r *Raft) advanceCommitIndex() {
 	for _, v := range r.Prs {
 		matchIndex = append(matchIndex, v.Match)
 	}
+
 	// reverse sort, for even num of node
 	sort.Sort(sort.Reverse(uint64Slice(matchIndex)))
 	// r only commit own log
@@ -720,15 +732,16 @@ func (r *Raft) handleAppendResp(m pb.Message) {
 		//fmt.Println("append success, index is ", m.Index)
 		r.Prs[m.From].Match = m.Index
 		r.Prs[m.From].Next = m.Index + 1
+
 		//log.Infof("%d append to %d success, next %d", r.Id, m.From, m.Index+1)
 	} else {
-		// first log index is 5
+		if m.Index < r.RaftLog.FirstIndex() {
+			r.sendSnapshot(m.From)
+			return
+		}
 		if r.Prs[m.From].Next > 1 {
 			//log.Infof("%d decrease %d next %d\n", r.Id, m.From, r.Prs[m.From].Next)
 			r.Prs[m.From].Next -= 1
-		}
-		if m.Index == 0 {
-			r.Prs[m.From].Next = 1
 		}
 		//log.Infof("%d decrease next for %d to %d, first index %d, m.index %d\n", r.Id, m.From, r.Prs[m.From].Next, r.RaftLog.firstIndex, m.Index)
 		r.sendAppend(m.From)
@@ -777,7 +790,7 @@ func (r *Raft) handleVoteResp(m pb.Message) {
 		return
 	}
 	if !m.Reject {
-		log.Infof("%d receive agree from %d\n", r.Id, m.From)
+		//log.Infof("%d receive agree from %d\n", r.Id, m.From)
 		r.votes[m.From] = true
 		r.Agreed += 1
 	} else {

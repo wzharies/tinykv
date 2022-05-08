@@ -269,12 +269,12 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		}
 
 		for cli := 0; cli < nclients; cli++ {
-			// log.Printf("read from clients %d\n", cli)
+			//log.Infof("read from clients %d\n", cli)
 			j := <-clnts[cli]
 
-			// if j < 10 {
-			// 	log.Printf("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
-			// }
+			//if j < 10 {
+			//log.Infof("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
+			//}
 			start := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", 0)
 			end := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 			values := cluster.Scan([]byte(start), []byte(end))

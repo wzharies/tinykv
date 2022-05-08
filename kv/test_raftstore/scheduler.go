@@ -184,6 +184,7 @@ func (m *MockSchedulerClient) GetStore(ctx context.Context, storeID uint64) (*me
 
 func (m *MockSchedulerClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	if err := m.checkBootstrap(); err != nil {
+		log.Infof("get region for key %s, err %+v", key, err)
 		return nil, nil, err
 	}
 	m.RLock()
@@ -193,13 +194,15 @@ func (m *MockSchedulerClient) GetRegion(ctx context.Context, key []byte) (*metap
 }
 
 func (m *MockSchedulerClient) getRegionLocked(key []byte) (*metapb.Region, *metapb.Peer) {
+	//log.Infof("find region for key %s\n", key)
 	result := m.findRegion(key)
 	if result == nil {
 		return nil, nil
 	}
 
+	//region := result.region
 	leader := m.leaders[result.region.GetId()]
-	//log.Infof("leader is %v\n", leader)
+	//log.Infof("find region %d [%s, %s] for key %s, leader is %v\n", region.Id, region.StartKey, region.EndKey, key, leader)
 	return &result.region, leader
 }
 
@@ -385,6 +388,7 @@ func (m *MockSchedulerClient) handleHeartbeatConfVersion(region *metapb.Region) 
 		if m.regionsRange.ReplaceOrInsert(&regionItem{region: *region}) == nil {
 			panic("update inexistent region ")
 		}
+		log.Infof("update region %d [%s, %s]\n", region.Id, region.StartKey, region.EndKey)
 	} else {
 		MustSamePeers(searchRegion, region)
 	}
@@ -465,12 +469,24 @@ func (m *MockSchedulerClient) findRegion(key []byte) *regionItem {
 	item := &regionItem{region: metapb.Region{StartKey: key}}
 
 	var result *regionItem
+	//log.Infof("now regionRange: %+v\n", m.regionsRange)
 	m.regionsRange.DescendLessOrEqual(item, func(i btree.Item) bool {
 		result = i.(*regionItem)
 		return false
 	})
 
 	if result == nil || !result.Contains(key) {
+		//log.Infof("key %s not region found\n", key)
+		//it := &regionItem{region: metapb.Region{
+		//	StartKey: []byte{},
+		//}}
+		//s := ""
+		//m.regionsRange.Ascend(func(i btree.Item) bool {
+		//	r := i.(*regionItem).region
+		//	s += fmt.Sprintf("region %d [%s, %s]; ", r.Id, r.StartKey, r.EndKey)
+		//	return true
+		//})
+		//log.Infof("regionsRange: %s\n", s)
 		return nil
 	}
 
@@ -480,6 +496,7 @@ func (m *MockSchedulerClient) findRegion(key []byte) *regionItem {
 func (m *MockSchedulerClient) addRegionLocked(region *metapb.Region) {
 	m.regionsKey[region.GetId()] = region.GetStartKey()
 	m.regionsRange.ReplaceOrInsert(&regionItem{region: *region})
+	log.Infof("insert region %d [%s, %s]\n", region.Id, region.StartKey, region.EndKey)
 }
 
 func (m *MockSchedulerClient) removeRegionLocked(region *metapb.Region) {
@@ -489,6 +506,7 @@ func (m *MockSchedulerClient) removeRegionLocked(region *metapb.Region) {
 		return
 	}
 	m.regionsRange.Delete(result)
+	log.Infof("delete region %d [%s, %s]\n", region.Id, region.StartKey, region.EndKey)
 }
 
 // Extra API for tests
