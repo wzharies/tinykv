@@ -287,7 +287,7 @@ func (r *Raft) sendSnapshot(to uint64) {
 		Term:     r.Term,
 		Snapshot: &snapshot,
 	})
-	log.Infof("%d success send snapshot to %d, index %d\n", r.Id, to, snapshot.Metadata.Index)
+	//log.Infof("%d success send snapshot to %d, index %d\n", r.Id, to, snapshot.Metadata.Index)
 	r.Prs[to].Next = snapshot.Metadata.Index + 1
 }
 
@@ -435,7 +435,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.leadTransferee = None
 	// for new added peer to add leader and self, prevent split brain
 	if _, ok := r.Prs[lead]; !ok && lead != None {
-		log.Infof("%d first become follower, add leader %d\n", r.Id, lead)
+		//log.Infof("%d first become follower, add leader %d\n", r.Id, lead)
 		r.Prs[lead] = &Progress{}
 	}
 	if _, ok := r.Prs[r.Id]; !ok {
@@ -457,7 +457,7 @@ func (r *Raft) becomeCandidate() {
 	r.Rejected = 0
 	r.votes[r.Id] = true
 	r.resetTick()
-	log.Infof("%d become candidate, term: %d, lastIndex: %d, commit index %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.RaftLog.committed, r.Prs)
+	//log.Infof("%d become candidate, term: %d, lastIndex: %d, commit index %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.RaftLog.committed, r.Prs)
 	//fmt.Printf("%d become candidate\n", r.Id)
 	if r.Agreed > len(r.Prs)/2 {
 		r.becomeLeader()
@@ -468,7 +468,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
-	log.Infof("%d become leader, Term: %d, lastIndex: %d, commit index %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.RaftLog.committed, r.Prs)
+	//log.Infof("%d become leader, Term: %d, lastIndex: %d, commit index %d, Prs: %+v\n", r.Id, r.Term, r.RaftLog.LastIndex(), r.RaftLog.committed, r.Prs)
 	r.State = StateLeader
 	r.Lead = r.Id
 	for _, v := range r.Prs {
@@ -504,7 +504,7 @@ func (r *Raft) appendEntries(entries ...*pb.Entry) {
 			//}
 			if r.PendingConfIndex < e.Index {
 				r.PendingConfIndex = e.Index
-				log.Infof("%d begin conf change pending at index %d, is leader %t \n", r.Id, e.Index, r.isLeader())
+				//log.Infof("%d begin conf change pending at index %d, is leader %t \n", r.Id, e.Index, r.isLeader())
 			}
 		}
 		es = append(es, pb.Entry{
@@ -857,7 +857,7 @@ func (r *Raft) hasNewerLogs(logTerm, index uint64) bool {
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
-	log.Infof("%d handle snapshot %+v\n", r.Id, m.Snapshot.Metadata)
+	//log.Infof("%d handle snapshot %+v\n", r.Id, m.Snapshot.Metadata)
 	meta := m.Snapshot.Metadata
 	if meta.Index <= r.RaftLog.committed {
 		r.sendAppendResp(m.From, false)

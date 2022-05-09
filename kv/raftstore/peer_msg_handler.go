@@ -151,7 +151,7 @@ func (d *peerMsgHandler) applyConfChange(entry eraftpb.Entry, cc *eraftpb.ConfCh
 			storeMeta.regions[region.Id] = region
 			storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: region})
 			storeMeta.Unlock()
-			log.Infof("%s finish add peer %d, now Prs %+v\n", d.Tag, peer.GetId(), region.Peers)
+			//log.Infof("%s finish add peer %d, now Prs %+v\n", d.Tag, peer.GetId(), region.Peers)
 		}
 	case eraftpb.ConfChangeType_RemoveNode:
 		// if self
@@ -160,7 +160,7 @@ func (d *peerMsgHandler) applyConfChange(entry eraftpb.Entry, cc *eraftpb.ConfCh
 			//if peerIndex != -1 {
 			//	region.Peers = append(region.Peers[:peerIndex], region.Peers[peerIndex+1:]...)
 			//}
-			log.Infof("%s destroyPeer %d, now Prs %+v\n", d.Tag, cc.NodeId, region.Peers)
+			//log.Infof("%s destroyPeer %d, now Prs %+v\n", d.Tag, cc.NodeId, region.Peers)
 			return wb
 		}
 		if peerIndex != -1 {
