@@ -368,6 +368,7 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		StartKey: snapData.Region.StartKey,
 		EndKey:   snapData.Region.EndKey,
 	}
+	<-ch
 	result := &ApplySnapResult{
 		PrevRegion: ps.region,
 		Region:     snapData.Region,

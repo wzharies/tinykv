@@ -227,8 +227,6 @@ func (d *peerMsgHandler) applyAdminRequest(entry eraftpb.Entry, msg *raft_cmdpb.
 			})
 			return wb
 		}
-		storeMeta := d.ctx.storeMeta
-		storeMeta.Lock()
 
 		splitReq := req.GetSplit()
 		if err := util.CheckKeyInRegion(splitReq.SplitKey, region); err != nil {
@@ -252,36 +250,43 @@ func (d *peerMsgHandler) applyAdminRequest(entry eraftpb.Entry, msg *raft_cmdpb.
 			StartKey: region.StartKey,
 			EndKey:   splitReq.SplitKey,
 			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: 1,
-				Version: 1,
+				ConfVer: region.RegionEpoch.ConfVer,
+				Version: region.RegionEpoch.Version + 1,
 			},
 			Peers: newPeers,
 		}
+		region.RegionEpoch.Version += 1
+		region.StartKey = splitReq.SplitKey
+
+		meta.WriteRegionState(wb, region, rspb.PeerState_Normal)
+		meta.WriteRegionState(wb, newRegion, rspb.PeerState_Normal)
+
 		newPeer, err := createPeer(d.ctx.store.Id, d.ctx.cfg, d.ctx.regionTaskSender, d.ctx.engine, newRegion)
 		if err != nil {
 			panic(err)
 		}
 
-		region.RegionEpoch.Version += 1
+		storeMeta := d.ctx.storeMeta
+		storeMeta.Lock()
 
-		storeMeta.regions[newRegion.Id] = newRegion
-		delete(storeMeta.regions, region.GetId())
-		storeMeta.regions[region.GetId()] = region
-		//region.EndKey = splitReq.SplitKey
-		region.StartKey = splitReq.SplitKey
+		storeMeta.setRegion(region, d.peer)
+		storeMeta.setRegion(newRegion, newPeer)
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: region})
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: newRegion})
 
 		storeMeta.Unlock()
 
-		meta.WriteRegionState(wb, region, rspb.PeerState_Normal)
-		meta.WriteRegionState(wb, newRegion, rspb.PeerState_Normal)
+		wb.WriteToDB(d.peerStorage.Engines.Kv)
+		wb = &engine_util.WriteBatch{}
 
 		d.SizeDiffHint = 0
 		d.ApproximateSize = new(uint64)
 
 		d.ctx.router.register(newPeer)
 		d.ctx.router.send(newRegion.Id, message.NewMsg(message.MsgTypeStart, nil))
+		if d.IsLeader() {
+			d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
+		}
 		//log.Infof("%s finish split region %d to region %d [%s, %s] and new region %d [%s, %s]\n", d.Tag,
 		//	region.Id, region.Id, region.StartKey, region.EndKey, newRegion.Id, newRegion.StartKey, newRegion.EndKey)
 		d.handleProposal(entry, func(p *proposal) {
@@ -295,9 +300,6 @@ func (d *peerMsgHandler) applyAdminRequest(entry eraftpb.Entry, msg *raft_cmdpb.
 				},
 			})
 		})
-	}
-	if d.IsLeader() {
-		d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
 	}
 	return wb
 }
@@ -367,8 +369,9 @@ func (d *peerMsgHandler) applyBasicRequest(entry eraftpb.Entry, msg *raft_cmdpb.
 				},
 			}
 		case raft_cmdpb.CmdType_Snap:
-			if msg.Header.RegionEpoch.Version != d.Region().RegionEpoch.Version {
-				p.cb.Done(ErrResp(&util.ErrEpochNotMatch{}))
+			if err, ok := util.CheckRegionEpoch(msg, d.Region(), true).(*util.ErrEpochNotMatch); ok {
+				p.cb.Done(ErrResp(err))
+				return
 			}
 			// must write data util this entry
 			d.peerStorage.applyState.AppliedIndex = entry.Index

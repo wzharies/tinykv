@@ -544,6 +544,9 @@ func (r *Raft) Step(m pb.Message) error {
 func (r *Raft) stepFollower(m pb.Message) {
 	switch m.MsgType {
 	case pb.MessageType_MsgHup:
+		if r.RaftLog.pendingSnapshot != nil {
+			return
+		}
 		r.campaign()
 	case pb.MessageType_MsgRequestVote:
 		r.handleVote(m)
