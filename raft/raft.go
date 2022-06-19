@@ -203,7 +203,7 @@ func (r *Raft) appendEntry(es ...*pb.Entry) {
 	for index, e := range es {
 		entries = append(entries, pb.Entry{
 			EntryType: e.EntryType,
-			Term:      e.Term,
+			Term:      r.Term,
 			Index:     lastIndex + uint64(index) + 1,
 			Data:      e.Data,
 		})
@@ -230,6 +230,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 	preLogTerm, err := r.RaftLog.Term(preLogIndex)
 	if err != nil {
 		// TODO
+		log.Debugf("preLogIndex nil :%v", preLogIndex)
 		return false
 	}
 	//log.Debugf("entries :%v, lastIndex:%v", r.RaftLog.entries, r.RaftLog.LastIndex())
@@ -254,7 +255,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 		Commit:  r.RaftLog.committed,
 	}
 	r.msgs = append(r.msgs, msg)
-	return false
+	return true
 }
 
 func (r *Raft) sendAppendResponse(to uint64, reject bool) {
@@ -272,11 +273,13 @@ func (r *Raft) sendAppendResponse(to uint64, reject bool) {
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	commit := min(r.RaftLog.committed, r.Prs[to].Match)
 	m := pb.Message{
 		MsgType: pb.MessageType_MsgHeartbeat,
 		To:      to,
 		From:    r.id,
 		Term:    r.Term,
+		Commit:  commit,
 	}
 	r.msgs = append(r.msgs, m)
 }
@@ -392,6 +395,16 @@ func (r *Raft) becomeLeader() {
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
 	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
+
+	//no-op
+	r.appendEntry(&pb.Entry{
+		EntryType: pb.EntryType_EntryNormal,
+		Term:      r.Term,
+		Index:     r.RaftLog.LastIndex() + 1,
+		Data:      nil,
+	})
+	r.bcastAppend()
+	r.updateCommit()
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -447,7 +460,9 @@ func (r *Raft) updateCommit() {
 				cnt++
 			}
 		}
-		if cnt > len(r.Prs)/2 {
+		//只能提交当前任期的日志 5.4
+		term, _ := r.RaftLog.Term(i)
+		if cnt > len(r.Prs)/2 && term == r.Term {
 			r.RaftLog.committed = i
 			r.bcastAppend()
 			return
@@ -480,22 +495,30 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	for i, entry := range m.Entries {
 		index++
 		term, err := r.RaftLog.Term(index)
-		if err != nil {
+		if err == nil {
 			if term == entry.Term {
 				continue
 			}
-			r.RaftLog.entries = r.RaftLog.entries[:index]
+			r.RaftLog.truncateAt(index)
+			//r.RaftLog.entries = r.RaftLog.entries[:index-r.RaftLog.FirstIndex()]
 		}
 		for _, e := range m.Entries[i:] {
-			r.RaftLog.entries = append(r.RaftLog.entries, *e)
+			//r.RaftLog.entries = append(r.RaftLog.entries, *e)
+			r.RaftLog.appendEntry(*e)
 		}
 		break
 	}
+	//set commitIndex = min(leaderCommit, index of last new entry)
+	//别忘记了是new entry，如果new entry为空，则以m.Index为准
 	if m.Commit > r.RaftLog.committed {
-		r.RaftLog.committed = min(m.Commit, r.RaftLog.LastIndex())
+		lastNewEntry := m.Index
+		if len(m.Entries) != 0 {
+			lastNewEntry = m.Entries[len(m.Entries)-1].Index
+		}
+		r.RaftLog.committed = min(m.Commit, lastNewEntry)
 	}
 
-	//TODO  重置选举时间
+	//TODO  可能需要重置选举时间
 	r.sendAppendResponse(m.From, false)
 
 }
@@ -518,6 +541,7 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 func (r *Raft) handlePropose(m pb.Message) {
 	r.appendEntry(m.Entries...)
 	r.bcastAppend()
+	r.updateCommit()
 }
 
 // handleHeartbeat handle Heartbeat RPC request
@@ -527,7 +551,12 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 		r.sendHeartbeatResponse(m.From, true)
 		return
 	}
+	//重设选举时间
 	r.becomeFollower(m.Term, m.From)
+	//更新commit
+	if m.Commit > r.RaftLog.committed {
+		r.RaftLog.committed = min(m.Commit, r.RaftLog.LastIndex())
+	}
 	r.sendHeartbeatResponse(m.From, false)
 }
 
@@ -535,6 +564,13 @@ func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 	if m.Term > r.Term {
 		r.becomeFollower(m.Term, None)
 	}
+	// TestCommitWithHeartbeat tests leader can send log
+	// to follower when it received a heartbeat response
+	// which indicate it doesn't have update-to-date log
+	if r.Prs[m.From].Match < r.RaftLog.LastIndex() {
+		r.sendAppend(m.From)
+	}
+
 }
 
 func (r *Raft) handleRequestVote(m pb.Message) {

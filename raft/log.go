@@ -87,6 +87,15 @@ func (l *RaftLog) appendEntries(es ...pb.Entry) {
 	l.entries = append(l.entries, es...)
 }
 
+func (l *RaftLog) appendEntry(e pb.Entry) {
+	l.entries = append(l.entries, e)
+}
+
+func (l *RaftLog) truncateAt(index uint64) {
+	l.entries = l.entries[:index-l.FirstIndex()]
+	l.stabled = min(l.stabled, index-1)
+}
+
 func (l *RaftLog) Entries(lo uint64, hi uint64) []pb.Entry {
 	if lo >= l.FirstIndex() && hi <= l.LastIndex()+1 {
 		return l.entries[lo-l.FirstIndex() : hi-l.FirstIndex()]
