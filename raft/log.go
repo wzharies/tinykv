@@ -60,6 +60,7 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
+	hardState, _, _ := storage.InitialState()
 	raftLog := &RaftLog{
 		storage: storage,
 	}
@@ -77,7 +78,7 @@ func newLog(storage Storage) *RaftLog {
 	}
 	//return nil
 	raftLog.stabled = lastIndex
-	raftLog.committed = firstIndex - 1
+	raftLog.committed = hardState.Commit
 	raftLog.applied = firstIndex - 1
 	raftLog.entries = entries
 	return raftLog
@@ -127,6 +128,10 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 		return nil
 	}
 	return l.entries[l.applied-l.FirstIndex()+1 : min(l.committed-l.FirstIndex()+1, uint64(len(l.entries)))]
+}
+
+func (l *RaftLog) hasNextEnts() bool {
+	return l.applied < min(l.committed, l.LastIndex())
 }
 
 // LastIndex return the last index of the log entries

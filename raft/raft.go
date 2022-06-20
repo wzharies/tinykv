@@ -191,10 +191,29 @@ func newRaft(c *Config) *Raft {
 	lastIndex := r.RaftLog.LastIndex()
 	for _, id := range c.peers {
 		r.Prs[id] = &Progress{Match: 0, Next: lastIndex + 1}
+		if id == r.id {
+			r.Prs[id].Match = lastIndex
+		}
 	}
-	r.Prs[r.id].Match = lastIndex
+	//存在测试给你ID但是peers为nil，不能这么写
+	//r.Prs[r.id].Match = lastIndex
 	r.becomeFollower(0, None)
 	return r
+}
+
+func (r *Raft) softState() *SoftState {
+	return &SoftState{
+		Lead:      r.Lead,
+		RaftState: r.State,
+	}
+}
+
+func (r *Raft) hardState() pb.HardState {
+	return pb.HardState{
+		Term:   r.Term,
+		Vote:   r.Vote,
+		Commit: r.RaftLog.committed,
+	}
 }
 
 func (r *Raft) appendEntry(es ...*pb.Entry) {
