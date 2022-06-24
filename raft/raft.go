@@ -171,7 +171,7 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	hardState, _, err := c.Storage.InitialState()
+	hardState, confState, err := c.Storage.InitialState()
 	if err != nil {
 		panic(err)
 	}
@@ -189,6 +189,9 @@ func newRaft(c *Config) *Raft {
 		electionTimeout:  c.ElectionTick,
 	}
 	lastIndex := r.RaftLog.LastIndex()
+	if c.peers == nil {
+		c.peers = confState.Nodes
+	}
 	for _, id := range c.peers {
 		r.Prs[id] = &Progress{Match: 0, Next: lastIndex + 1}
 		if id == r.id {

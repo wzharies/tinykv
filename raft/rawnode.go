@@ -166,10 +166,11 @@ func (rn *RawNode) Ready() Ready {
 		rn.prevSoftSt.RaftState = r.State
 		rd.SoftState = rn.prevSoftSt
 	}
+	//不相等可能不用判断
 	if hardSt := r.hardState(); !IsEmptyHardState(hardSt) && !isHardStateEqual(hardSt, rn.prevHardSt) {
 		rd.HardState = hardSt
 	}
-	if r.RaftLog.pendingSnapshot != nil && !IsEmptySnap(r.RaftLog.pendingSnapshot) {
+	if !IsEmptySnap(r.RaftLog.pendingSnapshot) {
 		rd.Snapshot = *r.RaftLog.pendingSnapshot
 	}
 	if len(r.msgs) > 0 {
@@ -189,7 +190,7 @@ func (rn *RawNode) HasReady() bool {
 	if hardSt := r.hardState(); !IsEmptyHardState(hardSt) && !isHardStateEqual(hardSt, rn.prevHardSt) {
 		return true
 	}
-	if r.RaftLog.pendingSnapshot != nil && !IsEmptySnap(r.RaftLog.pendingSnapshot) {
+	if !IsEmptySnap(r.RaftLog.pendingSnapshot) {
 		return true
 	}
 	if len(r.msgs) > 0 || len(r.RaftLog.unstableEntries()) > 0 || r.RaftLog.hasNextEnts() {
