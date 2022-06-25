@@ -124,7 +124,7 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	if len(l.entries) == 0 {
+	if len(l.entries) == 0 || !l.hasNextEnts() {
 		return nil
 	}
 	return l.entries[l.applied-l.FirstIndex()+1 : min(l.committed-l.FirstIndex()+1, uint64(len(l.entries)))]
