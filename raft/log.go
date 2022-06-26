@@ -110,6 +110,10 @@ func (l *RaftLog) Entries(lo uint64, hi uint64) []pb.Entry {
 // grow unlimitedly in memory
 func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
+	firstIndex, _ := l.storage.FirstIndex()
+	if l.FirstIndex() < firstIndex && firstIndex <= l.LastIndex() {
+		l.entries = l.entries[firstIndex-l.FirstIndex():]
+	}
 }
 
 // unstableEntries return all the unstable entries
@@ -152,9 +156,12 @@ func (l *RaftLog) LastIndex() uint64 {
 
 func (l *RaftLog) FirstIndex() uint64 {
 	// Your Code Here (2A).
-	// if l.pendingSnapshot.Metadata.Index != nil {
-	// 	return l.pendingSnapshot.Metadata.Index + 1
-	// }
+	if len(l.entries) != 0 {
+		return l.entries[0].Index
+	}
+	if !IsEmptySnap(l.pendingSnapshot) {
+		return l.pendingSnapshot.Metadata.Index + 1
+	}
 	index, err := l.storage.FirstIndex()
 	if err != nil {
 		log.Debug("firstindex error :%v", err)
@@ -191,6 +198,5 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 			return term, ErrCompacted
 		}
 	}
-	panic(err)
-
+	return term, err
 }

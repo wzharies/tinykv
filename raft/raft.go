@@ -251,8 +251,11 @@ func (r *Raft) sendAppend(to uint64) bool {
 	preLogIndex := r.Prs[to].Next - 1
 	preLogTerm, err := r.RaftLog.Term(preLogIndex)
 	if err != nil {
-		// TODO
-		log.Debugf("preLogIndex nil :%v", preLogIndex)
+		if err == ErrCompacted {
+			r.sendSnapshot(to)
+		}
+
+		//log.Debugf("preLogIndex nil :%v", preLogIndex)
 		return false
 	}
 	//log.Debugf("entries :%v, lastIndex:%v", r.RaftLog.entries, r.RaftLog.LastIndex())
@@ -278,6 +281,21 @@ func (r *Raft) sendAppend(to uint64) bool {
 	}
 	r.msgs = append(r.msgs, msg)
 	return true
+}
+
+func (r *Raft) sendSnapshot(to uint64) {
+	snap, err := r.RaftLog.storage.Snapshot()
+	if err != nil {
+		return
+	}
+	r.msgs = append(r.msgs, pb.Message{
+		MsgType:  pb.MessageType_MsgSnapshot,
+		From:     r.id,
+		To:       to,
+		Term:     r.Term,
+		Snapshot: &snap,
+	})
+	r.Prs[to].Next = snap.Metadata.Index + 1
 }
 
 func (r *Raft) sendAppendResponse(to uint64, reject bool) {
@@ -440,6 +458,8 @@ func (r *Raft) Step(m pb.Message) error {
 		r.handleRequestVote(m)
 	case pb.MessageType_MsgAppend:
 		r.handleAppendEntries(m)
+	case pb.MessageType_MsgSnapshot:
+		r.handleSnapshot(m)
 	}
 
 	switch r.State {
@@ -646,6 +666,27 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	meta := m.Snapshot.Metadata
+	if meta.Index <= r.RaftLog.committed {
+		r.sendAppendResponse(m.From, false)
+		return
+	}
+
+	if m.Term < r.Term {
+		r.sendAppendResponse(m.From, true)
+		return
+	}
+	r.becomeFollower(m.Term, m.From)
+	r.RaftLog.entries = nil
+	r.RaftLog.pendingSnapshot = m.Snapshot
+	r.RaftLog.stabled = meta.Index
+	r.RaftLog.applied = meta.Index
+	r.RaftLog.committed = meta.Index
+	r.Prs = make(map[uint64]*Progress)
+	for _, p := range meta.ConfState.Nodes {
+		r.Prs[p] = &Progress{}
+	}
+	r.sendAppendResponse(m.From, false)
 }
 
 // addNode add a new node to raft group

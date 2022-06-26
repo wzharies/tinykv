@@ -158,9 +158,9 @@ func (rn *RawNode) Ready() Ready {
 		//这样写有bug，与没有初始化的不相等
 		//Messages:         r.msgs,
 	}
-	if len(r.msgs) > 0 {
-		rd.Messages = r.msgs
-	}
+	// if len(r.msgs) > 0 {
+	// 	rd.Messages = r.msgs
+	// }
 	if r.Lead != rn.prevSoftSt.Lead || r.State != rn.prevSoftSt.RaftState {
 		rn.prevSoftSt.Lead = r.Lead
 		rn.prevSoftSt.RaftState = r.State
@@ -172,6 +172,7 @@ func (rn *RawNode) Ready() Ready {
 	}
 	if !IsEmptySnap(r.RaftLog.pendingSnapshot) {
 		rd.Snapshot = *r.RaftLog.pendingSnapshot
+		r.RaftLog.pendingSnapshot = nil
 	}
 	if len(r.msgs) > 0 {
 		rd.Messages = r.msgs

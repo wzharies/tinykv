@@ -67,17 +67,21 @@ func (d *peerMsgHandler) process(entry eraftpb.Entry) {
 	if err != nil {
 		log.Error(err)
 	}
+	kvWb := new(engine_util.WriteBatch)
 	if len(msg.Requests) > 0 {
 		log.Debugf("process request peer:%v requestType:%v", d.peer.Tag, msg.Requests[0].CmdType)
-		d.handleProposals(entry, msg)
+		d.handleProposals(entry, msg, kvWb)
 	}
 	if msg.AdminRequest != nil {
-		log.Debugf("AdminRequest")
+		//log.Debugf("AdminRequest")
+		d.handleAdminProposal(entry, msg, kvWb)
 	}
+	d.peerStorage.applyState.AppliedIndex = entry.Index
+	kvWb.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+	kvWb.MustWriteToDB(d.peerStorage.Engines.Kv)
 }
 
-func (d *peerMsgHandler) handleProposals(entry eraftpb.Entry, msg *raft_cmdpb.RaftCmdRequest) {
-	kvWb := new(engine_util.WriteBatch)
+func (d *peerMsgHandler) handleProposals(entry eraftpb.Entry, msg *raft_cmdpb.RaftCmdRequest, kvWb *engine_util.WriteBatch) {
 	res := &raft_cmdpb.RaftCmdResponse{
 		Header:    &raft_cmdpb.RaftResponseHeader{},
 		Responses: []*raft_cmdpb.Response{},
@@ -145,9 +149,19 @@ func (d *peerMsgHandler) handleProposals(entry eraftpb.Entry, msg *raft_cmdpb.Ra
 			d.proposals = d.proposals[1:]
 		}
 	}
-	d.peerStorage.applyState.AppliedIndex = entry.Index
-	kvWb.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
-	kvWb.MustWriteToDB(d.peerStorage.Engines.Kv)
+}
+
+func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdpb.RaftCmdRequest, kvWb *engine_util.WriteBatch) {
+	req := msg.AdminRequest
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		compactLog := req.GetCompactLog()
+		if compactLog.CompactIndex >= d.peerStorage.applyState.TruncatedState.Index {
+			d.peerStorage.applyState.TruncatedState.Index = compactLog.CompactIndex
+			d.peerStorage.applyState.TruncatedState.Term = compactLog.CompactTerm
+		}
+		d.ScheduleCompactLog(compactLog.CompactIndex)
+	}
 }
 
 func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
@@ -220,7 +234,15 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 	}
 	// Your Code Here (2B).
 	if msg.AdminRequest != nil {
-		log.Debugf("adminRequest!")
+		req := msg.AdminRequest
+		switch req.CmdType {
+		case raft_cmdpb.AdminCmdType_CompactLog:
+			data, err := msg.Marshal()
+			if err != nil {
+				log.Error(err)
+			}
+			d.RaftGroup.Propose(data)
+		}
 	} else {
 		for _, req := range msg.Requests {
 			key := getRequestKey(req)
