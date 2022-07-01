@@ -460,6 +460,8 @@ func (r *Raft) Step(m pb.Message) error {
 		r.handleAppendEntries(m)
 	case pb.MessageType_MsgSnapshot:
 		r.handleSnapshot(m)
+	case pb.MessageType_MsgTimeoutNow:
+		r.tick()
 	}
 
 	switch r.State {
@@ -489,6 +491,9 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handlePropose(m)
 		case pb.MessageType_MsgAppendResponse:
 			r.handleAppendResponse(m)
+		// 转移leader
+		case pb.MessageType_MsgTransferLeader:
+			r.handleTransferLeader(m)
 		}
 	}
 	return nil
@@ -697,4 +702,24 @@ func (r *Raft) addNode(id uint64) {
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+}
+
+func (r *Raft) handleTransferLeader(m pb.Message) {
+	// 1. 领导应该首先检查被转移者的资格 日志是否最新等
+	from := m.From
+	// 如果是一致
+	if r.Prs[from].Match != r.RaftLog.LastIndex() {
+
+		// 2. 如果不合格 就发送MsgAppend追加到被转移的目标 并停止接收新的日志
+		r.sendAppend(from)
+	}
+	// 如果合格 领导者就立刻发送MsgTimeOutNow的消息
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgTimeoutNow,
+		From:    r.id,
+		To:      from,
+		Term:    r.Term,
+	}
+	r.msgs = append(r.msgs, msg)
+
 }
