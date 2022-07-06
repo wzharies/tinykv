@@ -17,6 +17,7 @@ package raft
 import (
 	"errors"
 	"math/rand"
+	"sort"
 
 	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
@@ -373,12 +374,19 @@ func (r *Raft) tick() {
 	// Your Code Here (2A).
 	if r.State == StateLeader {
 		r.heartbeatElapsed++
+		// 发送心跳
 		if r.heartbeatElapsed >= r.heartbeatTimeout {
 			r.heartbeatTimeout = 0
 			if err := r.Step(pb.Message{From: r.id, MsgType: pb.MessageType_MsgBeat}); err != nil {
 				log.Debugf("sending heartbeat error: %v", err)
 			}
 		}
+		// 检查是否时leade人，并且
+		// If current leader cannot transfer leadership in electionTimeout, it becomes leader again.
+		if r.State == StateLeader && r.leadTransferee != None {
+			r.leadTransferee = None
+		}
+
 	} else {
 		r.electionElapsed++
 		if r.electionElapsed >= r.randomElectionTimeout {
@@ -436,7 +444,7 @@ func (r *Raft) becomeLeader() {
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
 	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
-
+	r.PendingConfIndex = r.RaftLog.LastIndex()
 	//no-op
 	r.appendEntry(&pb.Entry{
 		EntryType: pb.EntryType_EntryNormal,
@@ -489,11 +497,12 @@ func (r *Raft) Step(m pb.Message) error {
 		case pb.MessageType_MsgHeartbeatResponse:
 			r.handleHeartbeatResponse(m)
 		case pb.MessageType_MsgPropose:
-			r.handlePropose(m)
 			if r.leadTransferee != None {
 				log.Debugf("%x [term %d] transfer leadership to %x is in progress; dropping proposal", r.id, r.Term, r.leadTransferee)
 				return ErrProposalDropped
 			}
+			r.handlePropose(m)
+
 		case pb.MessageType_MsgAppendResponse:
 			r.handleAppendResponse(m)
 		// 转移leader
@@ -591,7 +600,9 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 }
 
 func (r *Raft) handlePropose(m pb.Message) {
-
+	for i := range m.Entries {
+		r.PendingConfIndex = r.RaftLog.LastIndex() + uint64(i) + 1
+	}
 	r.appendEntry(m.Entries...)
 	r.bcastAppend()
 	r.updateCommit()
@@ -703,11 +714,18 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	r.PendingConfIndex = None
+	if _, ok := r.Prs[id]; ok {
+		// Ignore any redundant addNode calls (which can happen because the
+		// initial bootstrapping entries are applied twice).
+		return
+	}
+
 	r.Prs[id] = &Progress{
 		Match: 0,
 		Next:  r.RaftLog.LastIndex() + 1,
 	}
-	r.PendingConfIndex = None
+	r.Prs[id] = &Progress{Next: r.RaftLog.LastIndex() + 1, Match: 0}
 }
 
 // removeNode remove a node from raft group
@@ -715,12 +733,33 @@ func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
 	delete(r.Prs, id)
 	r.PendingConfIndex = None
-
+	// do not try to commit or abort transferring if there is no nodes in the cluster.
+	if len(r.Prs) == 0 {
+		return
+	}
+	if r.maybeCommit() {
+		r.bcastAppend()
+	}
+	// If the removed node is the leadTransferee, then abort the leadership transferring.
+	if r.State == StateLeader && r.leadTransferee == id {
+		r.leadTransferee = None
+	}
 }
 
 func (r *Raft) handleTransferLeader(m pb.Message) {
+	if r.State != StateLeader {
+		log.Debugf("%x is not leader. Ignored transferring leadership", r.id)
+		return
+	}
 	// 1. 领导应该首先检查被转移者的资格 日志是否最新等
 	transferee := m.From
+	lastLeadTransferee := r.leadTransferee
+	if lastLeadTransferee != None {
+		if lastLeadTransferee == transferee {
+			return
+		}
+		r.leadTransferee = None
+	}
 	// 如果transferee是自己 就直接返回
 	if transferee == r.id {
 		return
@@ -738,18 +777,31 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 	}
 	// 更新leadTransferee用于判断当前集群是否在进行迁移
 	r.leadTransferee = transferee
+	r.electionElapsed = 0
+
 	// 如果是一致
 	if r.Prs[transferee].Match != r.RaftLog.LastIndex() {
 		// 2. 如果不合格 就发送MsgAppend追加到被转移的目标 并停止接收新的日志
 		r.sendAppend(transferee)
+	} else {
+		r.sendTimeoutNow(transferee)
 	}
-	// 如果合格 领导者就立刻发送MsgTimeOutNow的消息
-	msg := pb.Message{
-		MsgType: pb.MessageType_MsgTimeoutNow,
-		From:    r.id,
-		To:      transferee,
-		Term:    r.Term,
-	}
-	r.msgs = append(r.msgs, msg)
 
+}
+
+func (r *Raft) sendTimeoutNow(to uint64) {
+	// 如果合格 领导者就立刻发送MsgTimeOutNow的消息
+	msg := pb.Message{To: to, MsgType: pb.MessageType_MsgTimeoutNow}
+	r.msgs = append(r.msgs, msg)
+}
+
+func (r *Raft) maybeCommit() bool {
+	// TODO(bmizerany): optimize.. Currently naive
+	mis := make(uint64Slice, 0, len(r.Prs))
+	for id := range r.Prs {
+		mis = append(mis, r.Prs[id].Match)
+	}
+	sort.Sort(sort.Reverse(mis))
+	mci := mis[len(r.Prs)/2+1-1]
+	return r.RaftLog.maybeCommit(mci, r.Term)
 }
