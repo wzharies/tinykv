@@ -470,7 +470,7 @@ func (r *Raft) Step(m pb.Message) error {
 	case pb.MessageType_MsgSnapshot:
 		r.handleSnapshot(m)
 	case pb.MessageType_MsgTimeoutNow:
-		r.tick()
+		r.compaign()
 	}
 
 	switch r.State {
@@ -765,16 +765,16 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 		return
 	}
 	// 判断transferee是否在集群中存在
-	exist := false
-	for peer, _ := range r.Prs {
-		if peer == transferee {
-			exist = true
-			break
-		}
-	}
-	if !exist {
-		return
-	}
+	//exist := false
+	//for peer, _ := range r.Prs {
+	//	if peer == transferee {
+	//		exist = true
+	//		break
+	//	}
+	//}
+	//if !exist {
+	//	return
+	//}
 	// 更新leadTransferee用于判断当前集群是否在进行迁移
 	r.leadTransferee = transferee
 	r.electionElapsed = 0
