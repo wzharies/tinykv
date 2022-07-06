@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"sort"
 
@@ -470,7 +471,12 @@ func (r *Raft) Step(m pb.Message) error {
 	case pb.MessageType_MsgSnapshot:
 		r.handleSnapshot(m)
 	case pb.MessageType_MsgTimeoutNow:
-		r.compaign()
+		if m.From == r.Lead {
+			r.compaign()
+		}
+		// 转移leader
+	case pb.MessageType_MsgTransferLeader:
+		r.handleTransferLeader(m)
 	}
 
 	switch r.State {
@@ -505,9 +511,7 @@ func (r *Raft) Step(m pb.Message) error {
 
 		case pb.MessageType_MsgAppendResponse:
 			r.handleAppendResponse(m)
-		// 转移leader
-		case pb.MessageType_MsgTransferLeader:
-			r.handleTransferLeader(m)
+
 		}
 	}
 	return nil
@@ -747,11 +751,13 @@ func (r *Raft) removeNode(id uint64) {
 }
 
 func (r *Raft) handleTransferLeader(m pb.Message) {
-	if r.State != StateLeader {
-		log.Debugf("%x is not leader. Ignored transferring leadership", r.id)
-		return
-	}
 	// 1. 领导应该首先检查被转移者的资格 日志是否最新等
+	fmt.Printf("raft id %v state %v referee %v\n", r.id, r.State, m.From)
+	//if r.State != StateLeader {
+	//	return
+	//}
+	fmt.Printf("Start Leader Compaign\n")
+
 	transferee := m.From
 	lastLeadTransferee := r.leadTransferee
 	if lastLeadTransferee != None {
@@ -761,20 +767,30 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 		r.leadTransferee = None
 	}
 	// 如果transferee是自己 就直接返回
-	if transferee == r.id {
+
+	if transferee == r.id && r.State == StateLeader {
+		fmt.Printf("raft id %v transferee %v\n", r.id, m.From)
 		return
 	}
-	// 判断transferee是否在集群中存在
-	//exist := false
-	//for peer, _ := range r.Prs {
-	//	if peer == transferee {
-	//		exist = true
-	//		break
-	//	}
-	//}
-	//if !exist {
-	//	return
-	//}
+	if r.State != StateLeader {
+		m.To = r.Lead
+		r.msgs = append(r.msgs, m)
+		return
+	}
+	//判断transferee是否在集群中存在
+	exist := false
+	for peer, _ := range r.Prs {
+		if peer == transferee {
+			exist = true
+			break
+		}
+	}
+	if !exist {
+		fmt.Printf("transferee %v not exist\n", m.From)
+
+		return
+	}
+
 	// 更新leadTransferee用于判断当前集群是否在进行迁移
 	r.leadTransferee = transferee
 	r.electionElapsed = 0
@@ -791,7 +807,7 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 
 func (r *Raft) sendTimeoutNow(to uint64) {
 	// 如果合格 领导者就立刻发送MsgTimeOutNow的消息
-	msg := pb.Message{To: to, MsgType: pb.MessageType_MsgTimeoutNow}
+	msg := pb.Message{From: r.id, To: to, MsgType: pb.MessageType_MsgTimeoutNow}
 	r.msgs = append(r.msgs, msg)
 }
 
