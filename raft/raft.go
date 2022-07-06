@@ -149,6 +149,7 @@ type Raft struct {
 	// Follow the procedure defined in section 3.10 of Raft phd thesis.
 	// (https://web.stanford.edu/~ouster/cgi-bin/papers/OngaroPhD.pdf)
 	// (Used in 3A leader transfer)
+	// 表示的是leader转移目标的id，如果不是 则表示leader正在进行变更
 	leadTransferee uint64
 
 	// Only one conf change may be pending (in the log, but not yet
@@ -489,6 +490,10 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleHeartbeatResponse(m)
 		case pb.MessageType_MsgPropose:
 			r.handlePropose(m)
+			if r.leadTransferee != None {
+				log.Debugf("%x [term %d] transfer leadership to %x is in progress; dropping proposal", r.id, r.Term, r.leadTransferee)
+				return ErrProposalDropped
+			}
 		case pb.MessageType_MsgAppendResponse:
 			r.handleAppendResponse(m)
 		// 转移leader
@@ -586,6 +591,7 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 }
 
 func (r *Raft) handlePropose(m pb.Message) {
+
 	r.appendEntry(m.Entries...)
 	r.bcastAppend()
 	r.updateCommit()
@@ -697,27 +703,51 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	r.Prs[id] = &Progress{
+		Match: 0,
+		Next:  r.RaftLog.LastIndex() + 1,
+	}
+	r.PendingConfIndex = None
 }
 
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	delete(r.Prs, id)
+	r.PendingConfIndex = None
+
 }
 
 func (r *Raft) handleTransferLeader(m pb.Message) {
 	// 1. 领导应该首先检查被转移者的资格 日志是否最新等
-	from := m.From
+	transferee := m.From
+	// 如果transferee是自己 就直接返回
+	if transferee == r.id {
+		return
+	}
+	// 判断transferee是否在集群中存在
+	exist := false
+	for peer, _ := range r.Prs {
+		if peer == transferee {
+			exist = true
+			break
+		}
+	}
+	if !exist {
+		return
+	}
+	// 更新leadTransferee用于判断当前集群是否在进行迁移
+	r.leadTransferee = transferee
 	// 如果是一致
-	if r.Prs[from].Match != r.RaftLog.LastIndex() {
-
+	if r.Prs[transferee].Match != r.RaftLog.LastIndex() {
 		// 2. 如果不合格 就发送MsgAppend追加到被转移的目标 并停止接收新的日志
-		r.sendAppend(from)
+		r.sendAppend(transferee)
 	}
 	// 如果合格 领导者就立刻发送MsgTimeOutNow的消息
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgTimeoutNow,
 		From:    r.id,
-		To:      from,
+		To:      transferee,
 		Term:    r.Term,
 	}
 	r.msgs = append(r.msgs, msg)
