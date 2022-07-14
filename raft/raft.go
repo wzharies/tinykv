@@ -367,6 +367,22 @@ func (r *Raft) sendRequestVoteResponse(to uint64, reject bool) {
 	r.msgs = append(r.msgs, msg)
 }
 
+func (r *Raft) sendTimeoutNow(to uint64) {
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgTimeoutNow,
+		From:    r.id,
+		To:      to,
+	}
+	r.msgs = append(r.msgs, msg)
+}
+
+func (r *Raft) sendToLeader(m pb.Message) {
+	if r.Lead != None {
+		m.To = r.Lead
+		r.msgs = append(r.msgs, m)
+	}
+}
+
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
@@ -397,6 +413,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Term = term
 	r.Lead = lead
 	r.votes = nil
+	r.leadTransferee = None
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
 	r.randomElectionTimeout = r.electionTimeout + rand.Intn(r.electionTimeout)
@@ -451,6 +468,10 @@ func (r *Raft) becomeLeader() {
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+	//被remove也会收到消息，需要忽略掉。 TestTransferNonMember3A
+	if _, ok := r.Prs[r.id]; !ok {
+		return nil
+	}
 	switch m.MsgType {
 	case pb.MessageType_MsgHup:
 		r.compaign()
@@ -467,12 +488,17 @@ func (r *Raft) Step(m pb.Message) error {
 		switch m.MsgType {
 		case pb.MessageType_MsgHeartbeat:
 			r.handleHeartbeat(m)
+		case pb.MessageType_MsgTimeoutNow:
+			r.compaign()
+		case pb.MessageType_MsgTransferLeader:
+			r.sendToLeader(m)
 		}
-
 	case StateCandidate:
 		switch m.MsgType {
 		case pb.MessageType_MsgRequestVoteResponse:
 			r.handleRequestVoteResponse(m)
+		case pb.MessageType_MsgTransferLeader:
+			r.sendToLeader(m)
 		}
 	case StateLeader:
 		switch m.MsgType {
@@ -489,6 +515,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handlePropose(m)
 		case pb.MessageType_MsgAppendResponse:
 			r.handleAppendResponse(m)
+		case pb.MessageType_MsgTransferLeader:
+			r.handleTransferLeader(m)
 		}
 	}
 	return nil
@@ -578,9 +606,16 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 	r.Prs[m.From].Next = m.Index + 1
 	r.Prs[m.From].Match = m.Index
 	r.updateCommit()
+	if m.From == r.leadTransferee && m.Index == r.RaftLog.LastIndex() {
+		r.sendTimeoutNow(m.From)
+	}
 }
 
 func (r *Raft) handlePropose(m pb.Message) {
+	if r.leadTransferee != None {
+		log.Debug("handlePropose leadTransferee != None")
+		return
+	}
 	r.appendEntry(m.Entries...)
 	r.bcastAppend()
 	r.updateCommit()
@@ -689,12 +724,40 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 	r.sendAppendResponse(m.From, false)
 }
 
+func (r *Raft) handleTransferLeader(m pb.Message) {
+	if m.From == r.id {
+		log.Error("transfer from leader to leader")
+		return
+	}
+	if _, ok := r.Prs[m.From]; !ok {
+		return
+	}
+	if r.leadTransferee == m.From {
+		return
+	}
+	r.leadTransferee = m.From
+	if r.Prs[m.From].Match != r.RaftLog.LastIndex() {
+		r.sendAppend(m.From)
+	} else {
+		r.sendTimeoutNow(m.From)
+	}
+}
+
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	if _, ok := r.Prs[id]; !ok {
+		r.Prs[id] = &Progress{Match: 0, Next: 1}
+	}
+	r.PendingConfIndex = None
 }
 
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	delete(r.Prs, id)
+	if r.State == StateLeader {
+		r.updateCommit() //remove之后，不可以commit的就能够commit成功了
+	}
+	r.PendingConfIndex = None
 }
