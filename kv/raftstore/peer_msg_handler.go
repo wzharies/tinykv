@@ -161,6 +161,8 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 			d.peerStorage.applyState.TruncatedState.Term = compactLog.CompactTerm
 		}
 		d.ScheduleCompactLog(compactLog.CompactIndex)
+	case raft_cmdpb.AdminCmdType_Split:
+
 	}
 }
 
@@ -242,6 +244,16 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 				log.Error(err)
 			}
 			d.RaftGroup.Propose(data)
+		case raft_cmdpb.AdminCmdType_TransferLeader:
+			d.RaftGroup.TransferLeader(req.TransferLeader.Peer.Id)
+			res := &raft_cmdpb.RaftCmdResponse{
+				Header: &raft_cmdpb.RaftResponseHeader{},
+				AdminResponse: &raft_cmdpb.AdminResponse{
+					CmdType:        raft_cmdpb.AdminCmdType_TransferLeader,
+					TransferLeader: &raft_cmdpb.TransferLeaderResponse{},
+				},
+			}
+			cb.Done(res)
 		}
 	} else {
 		for _, req := range msg.Requests {
