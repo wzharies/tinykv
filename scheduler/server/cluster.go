@@ -278,32 +278,30 @@ func (c *RaftCluster) handleStoreHeartbeat(stats *schedulerpb.StoreStats) error 
 
 // processRegionHeartbeat updates the region information.
 func (c *RaftCluster) processRegionHeartbeat(region *core.RegionInfo) error {
-	// TODO Your Code Here (3C).
-	// 因为可能存在网络分区的问题，scheduler需要比较RegionEpoch也就是版本信息
-	// 如果数值相同 scheduler比较配置变化版本的数值，较大配置变更版本的节点拥有更新的数据
-	epoch := region.GetRegionEpoch()
-	if epoch == nil {
-		return errors.Errorf("region epoch is nil")
+	// Your Code Here (3C).
+	localRegion := c.GetRegion(region.GetID())
+	remoteEpoch := region.GetRegionEpoch()
+	if remoteEpoch == nil {
+		return errors.Errorf("epoch not found, regionID: %v", region.GetID())
 	}
-	regionInfo := c.GetRegion(region.GetID())
-	if regionInfo != nil {
-		if regionInfo.GetRegionEpoch().Version > epoch.Version || regionInfo.GetRegionEpoch().ConfVer > epoch.ConfVer {
-			return errors.Errorf("region is old")
+	if localRegion != nil {
+		localEpoch := localRegion.GetRegionEpoch()
+		if remoteEpoch.ConfVer < localEpoch.ConfVer || remoteEpoch.Version < localEpoch.Version {
+			return ErrRegionIsStale(region.GetMeta(), localRegion.GetMeta())
 		}
 	} else {
-		// 扫描重叠的region
-		regions := c.ScanRegions(region.GetStartKey(), region.GetEndKey(), -1)
-		for _, reg := range regions {
-			if reg.GetRegionEpoch().Version > epoch.Version || reg.GetRegionEpoch().ConfVer > epoch.ConfVer {
-				return errors.Errorf("region is old")
+		localRegions := c.ScanRegions(region.GetStartKey(), region.GetEndKey(), 0)
+		for _, r := range localRegions {
+			epoch := r.GetRegionEpoch()
+			if remoteEpoch.ConfVer < epoch.ConfVer || remoteEpoch.Version < epoch.ConfVer {
+				return ErrRegionIsStale(region.GetMeta(), r.GetMeta())
 			}
 		}
 	}
 	c.putRegion(region)
-	for i := range region.GetStoreIds() {
-		c.updateStoreStatusLocked(i)
+	for id := range region.GetStoreIds() {
+		c.updateStoreStatusLocked(id)
 	}
-
 	return nil
 }
 

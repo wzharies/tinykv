@@ -17,6 +17,7 @@ package raft
 import (
 	"errors"
 
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -157,6 +158,9 @@ func (rn *RawNode) Ready() Ready {
 		CommittedEntries: r.RaftLog.nextEnts(),
 		//这样写有bug，与没有初始化的不相等
 		//Messages:         r.msgs,
+	}
+	if len(rd.Entries) != 0 && len(rd.CommittedEntries) != 0 && rd.Entries[len(rd.Entries)-1].Index < rd.CommittedEntries[len(rd.CommittedEntries)-1].Index {
+		log.Error("applied > stabled")
 	}
 	// if len(r.msgs) > 0 {
 	// 	rd.Messages = r.msgs

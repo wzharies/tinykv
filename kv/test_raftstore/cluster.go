@@ -197,10 +197,20 @@ func (c *Cluster) Request(key []byte, reqs []*raft_cmdpb.Request, timeout time.D
 			SleepMS(100)
 			continue
 		}
+		// if resp.Responses[0].CmdType == raft_cmdpb.CmdType_Snap && !util.RegionEqual(region, resp.Responses[0].GetSnap().Region) {
+		// 	log.Infof("requset region:%v got %v", region, resp.Responses[0].GetSnap().Region)
+		// }
 		return resp, txn
 	}
 	panic("request timeout")
 }
+
+// func RegionEqual(l, r *metapb.Region) bool {
+// 	if l == nil || r == nil {
+// 		return false
+// 	}
+// 	return l.Id == r.Id && l.RegionEpoch.Version == r.RegionEpoch.Version && l.RegionEpoch.ConfVer == r.RegionEpoch.ConfVer
+// }
 
 func (c *Cluster) CallCommand(request *raft_cmdpb.RaftCmdRequest, timeout time.Duration) (*raft_cmdpb.RaftCmdResponse, *badger.Txn) {
 	storeID := request.Header.Peer.StoreId
