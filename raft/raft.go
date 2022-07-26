@@ -189,18 +189,25 @@ func newRaft(c *Config) *Raft {
 		electionTimeout:  c.ElectionTick,
 	}
 	lastIndex := r.RaftLog.LastIndex()
+	log.Infof("new raft :%v index :%v term :%v", r.id, lastIndex, r.Term)
 	if c.peers == nil {
 		c.peers = confState.Nodes
 	}
+	//conf change的时候，如果刚创建一个peer，他会发起选举扰乱
+	// if c.peers == nil {
+	// 	r.Prs[r.id] = &Progress{Match: lastIndex, Next: lastIndex + 1}
+	// }
 	for _, id := range c.peers {
-		r.Prs[id] = &Progress{Match: 0, Next: lastIndex + 1}
 		if id == r.id {
-			r.Prs[id].Match = lastIndex
+			r.Prs[r.id] = &Progress{Match: lastIndex, Next: lastIndex + 1}
+			continue
 		}
+		r.Prs[id] = &Progress{Match: 0, Next: lastIndex + 1}
 	}
 	//存在测试给你ID但是peers为nil，不能这么写
 	//r.Prs[r.id].Match = lastIndex
-	r.becomeFollower(0, None)
+	//bug 初始任期不为0
+	r.becomeFollower(r.Term, None)
 	return r
 }
 
@@ -386,24 +393,30 @@ func (r *Raft) sendToLeader(m pb.Message) {
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
+	//配置变更的时候，新增加的peer不应该参加选举
+	if len(r.Prs) == 0 {
+		return
+	}
 	if r.State == StateLeader {
 		r.heartbeatElapsed++
 		if r.heartbeatElapsed >= r.heartbeatTimeout {
-			r.heartbeatTimeout = 0
+			r.heartbeatElapsed = 0
 			if err := r.Step(pb.Message{From: r.id, MsgType: pb.MessageType_MsgBeat}); err != nil {
 				log.Debugf("sending heartbeat error: %v", err)
 			}
 		}
-	} else {
-		r.electionElapsed++
-		if r.electionElapsed >= r.randomElectionTimeout {
-			r.electionElapsed = 0
-			if err := r.Step(pb.Message{From: r.id, MsgType: pb.MessageType_MsgHup}); err != nil {
-				log.Debugf("sending start election error: %v", err)
+	}
+	r.electionElapsed++
+	if r.electionElapsed >= r.randomElectionTimeout {
+		r.electionElapsed = 0
+		if r.State == StateLeader {
+			if r.leadTransferee != None {
+				r.leadTransferee = None
 			}
+		} else if err := r.Step(pb.Message{From: r.id, MsgType: pb.MessageType_MsgHup}); err != nil {
+			log.Debugf("sending start election error: %v", err)
 		}
 	}
-
 }
 
 // becomeFollower transform this peer's state to Follower
@@ -442,6 +455,12 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	log.Infof("%v becomeLeader, term: %v", r.id, r.Term)
+	for index, isvote := range r.votes {
+		if isvote {
+			log.Infof("%v vote to %v", index, r.id)
+		}
+	}
 	r.State = StateLeader
 	r.Lead = r.id
 	for _, p := range r.Prs {
@@ -469,7 +488,7 @@ func (r *Raft) becomeLeader() {
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
 	//被remove也会收到消息，需要忽略掉。 TestTransferNonMember3A
-	if _, ok := r.Prs[r.id]; !ok {
+	if _, ok := r.Prs[r.id]; !ok && len(r.Prs) != 0 {
 		return nil
 	}
 	switch m.MsgType {
@@ -599,7 +618,12 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 		return
 	}
 	if m.Reject {
-		r.Prs[m.From].Next--
+		if r.Prs[m.From].Next > 1 {
+			r.Prs[m.From].Next--
+		}
+		if m.Index < r.Prs[m.From].Next {
+			r.Prs[m.From].Next = m.Index + 1
+		}
 		r.sendAppend(m.From)
 		return
 	}
@@ -663,18 +687,20 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 		//单纯任期大不一定要投票
 		r.Vote = None
 	}
-	//要么任期更大，要么已经
+	//要么任期更大，要么重复投票
 	if r.Vote == None || r.Vote == m.From {
 		lastTerm := r.RaftLog.LastTerm()
 		lastIndex := r.RaftLog.LastIndex()
 		//log.Debug("printf lastTerm:%v, lastIndex:%v, m.LogTerm:%v, m.Index%v", lastTerm, lastIndex, m.LogTerm, m.Index)
-		//比较谁的日志更完整，如果对方的任期更大，或者任期相同但是日志更完整，则同意投票
-		if m.LogTerm > lastTerm || (m.LogTerm == lastTerm && m.Index >= lastIndex) {
-			r.sendRequestVoteResponse(m.From, false)
-			r.Vote = m.From
+		//比较谁的日志更完整，(就是错在这里！！！)如果对方的任期更大，或者任期相同但是日志更完整，则同意投票
+		//比谁的日志更完整，如果对方任期小，或者任期相同但是日志更短，则拒绝掉
+		if m.LogTerm < lastTerm || (m.LogTerm == lastTerm && m.Index < lastIndex) {
+			r.sendRequestVoteResponse(m.From, true)
 			return
 		}
-		r.sendRequestVoteResponse(m.From, true)
+		//log.Infof("%v vote to %v term: %v, lastIndex :%v lastTerm :%v, m.Index :%v, m.LogTerm :%v", r.id, m.From, m.Term, lastIndex, lastTerm, m.Index, m.LogTerm)
+		r.Vote = m.From
+		r.sendRequestVoteResponse(m.From, false)
 		return
 	}
 	r.sendRequestVoteResponse(m.From, true)
@@ -685,9 +711,14 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 		return
 	}
 	if !m.Reject {
-		r.granted++
-		r.votes[m.From] = true
+		if r.votes[m.From] == false {
+			r.votes[m.From] = true
+			r.granted++
+		} else {
+			log.Debugf("get repeat vote")
+		}
 	} else {
+		//拒绝收到重复投票的话会提前终止选举。
 		r.rejected++
 		r.votes[m.From] = false
 	}
@@ -726,7 +757,7 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 
 func (r *Raft) handleTransferLeader(m pb.Message) {
 	if m.From == r.id {
-		log.Error("transfer from leader to leader")
+		//log.Infof("transfer from leader to leader")
 		return
 	}
 	if _, ok := r.Prs[m.From]; !ok {
@@ -736,6 +767,7 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 		return
 	}
 	r.leadTransferee = m.From
+	r.electionElapsed = 0
 	if r.Prs[m.From].Match != r.RaftLog.LastIndex() {
 		r.sendAppend(m.From)
 	} else {
