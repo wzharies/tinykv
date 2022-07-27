@@ -51,15 +51,15 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		return
 	}
 	ready := d.RaftGroup.Ready()
-	result, err := d.peerStorage.SaveReadyState(&ready)
-	if result != nil && !reflect.DeepEqual(result.PrevRegion, result.Region) {
-		d.peerStorage.SetRegion(result.Region)
+	applyResult, err := d.peerStorage.SaveReadyState(&ready)
+	if applyResult != nil && !reflect.DeepEqual(applyResult.PrevRegion, applyResult.Region) {
 		storeMeta := d.ctx.storeMeta
 		storeMeta.Lock()
-		storeMeta.regions[result.Region.GetId()] = result.Region
-		storeMeta.regionRanges.Delete(&regionItem{region: result.PrevRegion})
-		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: result.Region})
+		storeMeta.regions[applyResult.Region.GetId()] = applyResult.Region
+		storeMeta.regionRanges.Delete(&regionItem{region: applyResult.PrevRegion})
+		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: applyResult.Region})
 		storeMeta.Unlock()
+		d.peerStorage.SetRegion(applyResult.Region)
 	}
 	if err != nil {
 		log.Error(err)
@@ -70,6 +70,9 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		if d.stopped {
 			return
 		}
+	}
+	if d.peerStorage.raftState.LastIndex < d.peerStorage.applyState.AppliedIndex {
+		log.Error("lastindex < appliedIndex")
 	}
 	d.RaftGroup.Advance(ready)
 }
@@ -117,7 +120,12 @@ func (d *peerMsgHandler) processConfChange(entry eraftpb.Entry, cc *eraftpb.Conf
 		d.handleProposal(entry, msg, ErrResp(err))
 		return
 	}
-	peerIndex := regionPeerIndex(region, cc.NodeId)
+	peerIndex := -1
+	for i, peer := range region.Peers {
+		if peer.Id == cc.NodeId {
+			peerIndex = i
+		}
+	}
 	switch cc.ChangeType {
 	case eraftpb.ConfChangeType_AddNode:
 		// node is not in cluster
@@ -294,46 +302,40 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 			d.handleProposal(entry, msg, ErrResp(err))
 			return
 		}
-		// update meta info
+
+		newRegion := new(metapb.Region)
+		util.CloneMsg(region, newRegion)
+		newRegion.Id = splitReq.NewRegionId
+		newRegion.StartKey = splitReq.GetSplitKey()
+		newRegion.EndKey = region.EndKey
+		newRegion.RegionEpoch.Version = 1
+		newRegion.RegionEpoch.ConfVer = 1
+		for i, peer := range newRegion.Peers {
+			peer.Id = splitReq.NewPeerIds[i]
+		}
+
 		storeMeta := d.ctx.storeMeta
 		storeMeta.Lock()
 		storeMeta.regionRanges.Delete(&regionItem{region: region})
-		region.RegionEpoch.Version += 1
-		newPeers := make([]*metapb.Peer, 0)
-		for i, peer := range region.Peers {
-			newPeers = append(newPeers, &metapb.Peer{
-				Id:      splitReq.NewPeerIds[i],
-				StoreId: peer.StoreId,
-			})
-		}
-		newRegion := &metapb.Region{
-			Id:       splitReq.NewRegionId,
-			StartKey: splitReq.SplitKey,
-			EndKey:   region.EndKey,
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: 1,
-				Version: 1,
-			},
-			Peers: newPeers,
-		}
 		storeMeta.regions[newRegion.Id] = newRegion
 		region.EndKey = splitReq.SplitKey
+		region.RegionEpoch.Version += 1
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: region})
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: newRegion})
 		storeMeta.Unlock()
 		meta.WriteRegionState(kvWb, region, rspb.PeerState_Normal)
 		meta.WriteRegionState(kvWb, newRegion, rspb.PeerState_Normal)
-		// clear region size
-		d.SizeDiffHint = 0
-		d.ApproximateSize = new(uint64)
-		// create peer
+
 		newPeer, err := createPeer(d.ctx.store.Id, d.ctx.cfg, d.ctx.regionTaskSender, d.ctx.engine, newRegion)
 		if err != nil {
 			panic(err)
 		}
 		d.ctx.router.register(newPeer)
-		// start new peer
 		d.ctx.router.send(newRegion.Id, message.NewMsg(message.MsgTypeStart, nil))
+
+		d.SizeDiffHint = 0
+		d.ApproximateSize = new(uint64)
+
 		res := &raft_cmdpb.RaftCmdResponse{
 			Header: &raft_cmdpb.RaftResponseHeader{},
 			AdminResponse: &raft_cmdpb.AdminResponse{
@@ -465,21 +467,21 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 				}
 				errors := fmt.Errorf("delete leader, only two node, refuse")
 				cb.Done(ErrResp(errors))
-				log.Warning("delete leader, only two node, refuse")
+				log.Infof("delete leader, only two node, refuse")
 				return
 			}
 			if d.RaftGroup.Raft.PendingConfIndex > d.peerStorage.AppliedIndex() {
 				return
+			}
+			ctx, err := msg.Marshal()
+			if err != nil {
+				panic(err)
 			}
 			d.proposals = append(d.proposals, &proposal{
 				index: d.nextProposalIndex(),
 				term:  d.Term(),
 				cb:    cb,
 			})
-			ctx, err := msg.Marshal()
-			if err != nil {
-				panic(err)
-			}
 			d.RaftGroup.ProposeConfChange(eraftpb.ConfChange{
 				ChangeType: req.ChangePeer.ChangeType,
 				NodeId:     req.ChangePeer.Peer.Id,
@@ -515,7 +517,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		}
 		data, err := msg.Marshal()
 		if err != nil {
-			log.Error(err)
+			panic(err)
 		}
 		proposal := proposal{
 			index: d.nextProposalIndex(),
