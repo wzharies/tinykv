@@ -698,7 +698,7 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 			r.sendRequestVoteResponse(m.From, true)
 			return
 		}
-		//log.Infof("%v vote to %v term: %v, lastIndex :%v lastTerm :%v, m.Index :%v, m.LogTerm :%v", r.id, m.From, m.Term, lastIndex, lastTerm, m.Index, m.LogTerm)
+		log.Infof("%v vote to %v term: %v, lastIndex :%v lastTerm :%v, m.Index :%v, m.LogTerm :%v", r.id, m.From, m.Term, lastIndex, lastTerm, m.Index, m.LogTerm)
 		r.Vote = m.From
 		r.sendRequestVoteResponse(m.From, false)
 		return
