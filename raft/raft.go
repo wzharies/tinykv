@@ -569,6 +569,10 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		return
 	}
 
+	if m.From != r.Lead {
+		log.Infof("from %v to %v term %v, my lead :%v term :%v", m.From, m.To, m.Term, r.Lead, r.Term)
+	}
+
 	//重置选举时间
 	r.becomeFollower(m.Term, m.From)
 
@@ -652,6 +656,11 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 		r.sendHeartbeatResponse(m.From, true)
 		return
 	}
+
+	if m.From != r.Lead {
+		log.Infof("heartbead from %v to %v term %v, my lead :%v term :%v", m.From, m.To, m.Term, r.Lead, r.Term)
+	}
+
 	//重设选举时间
 	r.becomeFollower(m.Term, m.From)
 	//更新commit
@@ -664,6 +673,8 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 	if m.Term > r.Term {
 		r.becomeFollower(m.Term, None)
+		//忘记return导致了一系列的bug
+		return
 	}
 	// TestCommitWithHeartbeat tests leader can send log
 	// to follower when it received a heartbeat response
