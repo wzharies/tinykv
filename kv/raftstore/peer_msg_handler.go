@@ -67,6 +67,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	d.Send(d.ctx.trans, ready.Messages)
 	for _, entry := range ready.CommittedEntries {
 		d.process(entry)
+		log.Infof("process request peer:%v Index: %v, lastIndex %v", d.peer.Tag, d.peerStorage.applyState.AppliedIndex, d.peerStorage.raftState.LastIndex)
 		if d.stopped {
 			return
 		}
@@ -97,11 +98,9 @@ func (d *peerMsgHandler) process(entry eraftpb.Entry) {
 			log.Error(err)
 		}
 		if len(msg.Requests) > 0 {
-			log.Debugf("process request peer:%v requestType:%v", d.peer.Tag, msg.Requests[0].CmdType)
 			d.handleProposals(entry, msg, kvWb)
 		}
 		if msg.AdminRequest != nil {
-			//log.Debugf("AdminRequest")
 			d.handleAdminProposal(entry, msg, kvWb)
 		}
 	}
