@@ -67,13 +67,13 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	d.Send(d.ctx.trans, ready.Messages)
 	for _, entry := range ready.CommittedEntries {
 		d.process(entry)
-		log.Infof("process request peer:%v Index: %v, lastIndex %v", d.peer.Tag, d.peerStorage.applyState.AppliedIndex, d.peerStorage.raftState.LastIndex)
+		//log.Infof("%v process request peer Index: %v, lastIndex %v, lastTerm %v", d.peer.Tag, d.peerStorage.applyState.AppliedIndex, d.peerStorage.raftState.LastIndex, d.peerStorage.raftState.LastTerm)
 		if d.stopped {
 			return
 		}
 	}
 	if d.peerStorage.raftState.LastIndex < d.peerStorage.applyState.AppliedIndex {
-		log.Error("lastindex < appliedIndex")
+		log.Errorf("%v lastindex %v < appliedIndex %v", d.Tag, d.peerStorage.raftState.LastIndex, d.peerStorage.applyState.AppliedIndex)
 	}
 	d.RaftGroup.Advance(ready)
 }
@@ -95,7 +95,7 @@ func (d *peerMsgHandler) process(entry eraftpb.Entry) {
 		msg := &raft_cmdpb.RaftCmdRequest{}
 		err := msg.Unmarshal(entry.Data)
 		if err != nil {
-			log.Error(err)
+			log.Panic(err)
 		}
 		if len(msg.Requests) > 0 {
 			d.handleProposals(entry, msg, kvWb)
@@ -201,7 +201,7 @@ func (d *peerMsgHandler) handleProposals(entry eraftpb.Entry, msg *raft_cmdpb.Ra
 		switch req.CmdType {
 		case raft_cmdpb.CmdType_Put:
 			kvWb.SetCF(req.Put.Cf, req.Put.Key, req.Put.Value)
-			//log.Infof("%v SetCF: %s-%s-%s", d.peer.Tag, req.Put.Cf, req.Put.Key, req.Put.Value)
+			//log.Infof("%v SetCF: %s-%s-%s Index :%v Term :%v", d.peer.Tag, req.Put.Cf, req.Put.Key, req.Put.Value, entry.Index, entry.Term)
 		case raft_cmdpb.CmdType_Delete:
 			kvWb.DeleteCF(req.Delete.Cf, req.Delete.Key)
 			log.Debugf("%v DeleteCF: %s-%s", d.peer.Tag, req.Delete.Cf, req.Delete.Key)

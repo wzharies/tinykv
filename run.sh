@@ -1,6 +1,6 @@
 #!/bin/bash
-for ((i=1;i<=10;i++));
+for ((i=1;i<=50;i++));
 do
 	echo "ROUND $i";
-	make project3b >> ./out/out3b-4.log;
+	make project2b >> out2b-2.log;
 done

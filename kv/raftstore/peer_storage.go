@@ -315,6 +315,7 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 	storageLast, _ := ps.LastIndex()
 	entriesFirst := entries[0].Index
 	entriesLast := entries[len(entries)-1].Index
+	entriesLastTerm := entries[len(entries)-1].Term
 
 	if storageFirst <= entriesLast {
 		// 这样写可能有问题
@@ -322,7 +323,7 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 		if entriesFirst < storageFirst {
 			entries = entries[storageFirst-entriesFirst:]
 		}
-		if entriesFirst > storageLast+1 {
+		if entries[0].Index > storageLast+1 {
 			log.Error("missing log %v", storageLast+1)
 		}
 		for _, e := range entries {
@@ -331,8 +332,9 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 		for index := entriesLast + 1; index <= storageLast; index++ {
 			raftWB.DeleteMeta(meta.RaftLogKey(ps.region.GetId(), index))
 		}
+		//log.Infof("%v lastIndex :%v lastTerm :%v", ps.Tag, entriesLast, entriesLastTerm)
 		ps.raftState.LastIndex = entriesLast
-		ps.raftState.LastTerm = entries[len(entries)-1].Term
+		ps.raftState.LastTerm = entriesLastTerm
 	}
 	return nil
 }
