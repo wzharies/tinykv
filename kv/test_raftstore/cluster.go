@@ -315,6 +315,10 @@ func (c *Cluster) MustPutCF(cf string, key, value []byte) {
 		panic(resp.Header.Error)
 	}
 	if len(resp.Responses) != 1 {
+		log.Error("req :%v", req)
+		for index, res := range resp.Responses {
+			log.Error("%v res :%v", index, res)
+		}
 		panic("len(resp.Responses) != 1")
 	}
 	if resp.Responses[0].CmdType != raft_cmdpb.CmdType_Put {
