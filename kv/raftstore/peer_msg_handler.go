@@ -61,14 +61,14 @@ func (d *peerMsgHandler) HandleRaftReady() {
 			storeMeta.regionRanges.Delete(&regionItem{region: applyResult.PrevRegion})
 		}
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: applyResult.Region})
-		log.Infof("%v delete region :%v", d.Tag, applyResult.PrevRegion)
-		log.Infof("%v add region :%v", d.Tag, applyResult.Region)
-		log.Infof("%v range: %v", d.Tag, storeMeta.regionRanges)
+		// log.Infof("%v delete region :%v", d.Tag, applyResult.PrevRegion)
+		// log.Infof("%v add region :%v", d.Tag, applyResult.Region)
+		// log.Infof("%v range: %v", d.Tag, storeMeta.regionRanges)
 		storeMeta.Unlock()
 		d.peerStorage.SetRegion(applyResult.Region)
 	}
 	if err != nil {
-		log.Error(err)
+		panic(err)
 	}
 	d.Send(d.ctx.trans, ready.Messages)
 	if len(ready.CommittedEntries) > 0 {
@@ -81,9 +81,9 @@ func (d *peerMsgHandler) HandleRaftReady() {
 			}
 			d.peerStorage.applyState.AppliedIndex = entry.Index
 		}
-		if d.peerStorage.raftState.LastIndex < d.peerStorage.applyState.AppliedIndex {
-			log.Errorf("%v lastindex %v < appliedIndex %v", d.Tag, d.peerStorage.raftState.LastIndex, d.peerStorage.applyState.AppliedIndex)
-		}
+		// if d.peerStorage.raftState.LastIndex < d.peerStorage.applyState.AppliedIndex {
+		// 	log.Errorf("%v lastindex %v < appliedIndex %v", d.Tag, d.peerStorage.raftState.LastIndex, d.peerStorage.applyState.AppliedIndex)
+		// }
 		kvWb.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
 		kvWb.MustWriteToDB(d.peerStorage.Engines.Kv)
 		//log.Infof("%v write to disk index: %v", d.Tag, d.peerStorage.applyState.AppliedIndex)
@@ -134,7 +134,6 @@ func (d *peerMsgHandler) processConfChange(entry eraftpb.Entry, cc *eraftpb.Conf
 	}
 	switch cc.ChangeType {
 	case eraftpb.ConfChangeType_AddNode:
-		// node is not in cluster
 		if peerIndex == -1 {
 			peer := msg.AdminRequest.ChangePeer.Peer
 			region.Peers = append(region.Peers, peer)
@@ -145,16 +144,13 @@ func (d *peerMsgHandler) processConfChange(entry eraftpb.Entry, cc *eraftpb.Conf
 			storeMeta.regions[region.Id] = region
 			storeMeta.Unlock()
 			d.insertPeerCache(peer)
-			log.Infof("%s add peer %d", d.Tag, cc.NodeId)
 		}
 	case eraftpb.ConfChangeType_RemoveNode:
 		if cc.NodeId == d.Meta.Id {
 			d.destroyPeer()
 			return wb
 		}
-		// node is in cluster
 		if peerIndex != -1 {
-			// delete current peer by index
 			region.Peers = append(region.Peers[:peerIndex], region.Peers[peerIndex+1:]...)
 			region.RegionEpoch.ConfVer += 1
 			meta.WriteRegionState(wb, region, rspb.PeerState_Normal)
@@ -163,11 +159,10 @@ func (d *peerMsgHandler) processConfChange(entry eraftpb.Entry, cc *eraftpb.Conf
 			storeMeta.regions[region.Id] = region
 			storeMeta.Unlock()
 			d.removePeerCache(cc.NodeId)
-			log.Infof("%s remove peer %d", d.Tag, cc.NodeId)
 		}
 	}
 	d.RaftGroup.ApplyConfChange(*cc)
-	log.Infof("%s change conf to: %v", d.Tag, d.RaftGroup.Raft.Prs)
+	//log.Infof("%s change conf to: %v", d.Tag, d.RaftGroup.Raft.Prs)
 	res := &raft_cmdpb.RaftCmdResponse{
 		Header: &raft_cmdpb.RaftResponseHeader{},
 		AdminResponse: &raft_cmdpb.AdminResponse{
@@ -182,27 +177,7 @@ func (d *peerMsgHandler) processConfChange(entry eraftpb.Entry, cc *eraftpb.Conf
 	return wb
 }
 
-func regionPeerIndex(region *metapb.Region, id uint64) int {
-	for i, peer := range region.Peers {
-		if peer.Id == id {
-			return i
-		}
-	}
-	return -1
-}
-
 func (d *peerMsgHandler) handleProposals(entry eraftpb.Entry, msg *raft_cmdpb.RaftCmdRequest, kvWb *engine_util.WriteBatch) *engine_util.WriteBatch {
-	// for _, req := range msg.Requests {
-
-	// 	switch req.CmdType {
-	// 	case raft_cmdpb.CmdType_Put:
-	// 	case raft_cmdpb.CmdType_Delete:
-	// 		kvWb.DeleteCF(req.Delete.Cf, req.Delete.Key)
-	// 		log.Debugf("%v DeleteCF: %s-%s", d.peer.Tag, req.Delete.Cf, req.Delete.Key)
-	// 	}
-	// }
-
-	//d.handleEntry(proposal, msg, entry)
 	res := &raft_cmdpb.RaftCmdResponse{
 		Header:    &raft_cmdpb.RaftResponseHeader{},
 		Responses: []*raft_cmdpb.Response{},
@@ -243,7 +218,7 @@ func (d *peerMsgHandler) handleProposals(entry eraftpb.Entry, msg *raft_cmdpb.Ra
 			})
 		case raft_cmdpb.CmdType_Delete:
 			kvWb.DeleteCF(req.Delete.Cf, req.Delete.Key)
-			log.Debugf("%v DeleteCF: %s-%s", d.peer.Tag, req.Delete.Cf, req.Delete.Key)
+			//log.Debugf("%v DeleteCF: %s-%s", d.peer.Tag, req.Delete.Cf, req.Delete.Key)
 			res.Responses = append(res.Responses, &raft_cmdpb.Response{
 				CmdType: raft_cmdpb.CmdType_Delete,
 				Delete:  &raft_cmdpb.DeleteResponse{},
@@ -305,7 +280,7 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 		}
 		d.ScheduleCompactLog(compactLog.CompactIndex)
 	case raft_cmdpb.AdminCmdType_Split:
-		log.Infof("try split %v, index: %v", d.Tag, entry.Index)
+		//log.Infof("try split %v, index: %v", d.Tag, entry.Index)
 		region := d.Region()
 		if err, ok := util.CheckRegionEpoch(msg, region, true).(*util.ErrEpochNotMatch); ok {
 			d.handleProposal(entry, msg, ErrResp(err), nil)
@@ -317,7 +292,7 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 			return kvWb
 		}
 		if len(splitReq.NewPeerIds) != len(region.Peers) {
-			log.Error("peer count not equal")
+			//log.Error("peer count not equal")
 			if d.IsLeader() {
 				d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
 			}
@@ -340,15 +315,15 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 		storeMeta := d.ctx.storeMeta
 		storeMeta.Lock()
 		storeMeta.regionRanges.Delete(&regionItem{region: region})
-		log.Infof("%v delete region :%v", d.Tag, region)
+		//log.Infof("%v delete region :%v", d.Tag, region)
 		storeMeta.regions[newRegion.Id] = newRegion
 		region.EndKey = splitReq.SplitKey
 		region.RegionEpoch.Version += 1
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: region})
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: newRegion})
-		log.Infof("%v add region :%v", d.Tag, region)
-		log.Infof("%v add region :%v", d.Tag, newRegion)
-		log.Infof("%v range: %v", d.Tag, storeMeta.regionRanges)
+		//log.Infof("%v add region :%v", d.Tag, region)
+		//log.Infof("%v add region :%v", d.Tag, newRegion)
+		//log.Infof("%v range: %v", d.Tag, storeMeta.regionRanges)
 		storeMeta.Unlock()
 		meta.WriteRegionState(kvWb, region, rspb.PeerState_Normal)
 		meta.WriteRegionState(kvWb, newRegion, rspb.PeerState_Normal)
@@ -377,7 +352,7 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 			d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
 			d.newPeerHeartbeatScheduler(newRegion, newPeer)
 		}
-		log.Infof("finished split %v", d.Tag)
+		//log.Infof("finished split %v", d.Tag)
 	}
 	return kvWb
 }
@@ -485,8 +460,6 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 			}
 			cb.Done(res)
 		case raft_cmdpb.AdminCmdType_ChangePeer:
-			// Config changes are only allowed to be proposed
-			// if the leader's applied index is greater than this value.
 			if req.ChangePeer.ChangeType == eraftpb.ConfChangeType_RemoveNode && req.ChangePeer.Peer.Id == d.PeerId() && d.IsLeader() && len(d.Region().Peers) == 2 {
 				if d.PeerId() == d.Region().Peers[0].Id {
 					d.RaftGroup.TransferLeader(d.Region().Peers[1].Id)
@@ -495,7 +468,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 				}
 				errors := fmt.Errorf("delete leader, only two node, refuse")
 				cb.Done(ErrResp(errors))
-				log.Infof("delete leader, only two node, refuse")
+				//log.Infof("delete leader, only two node, refuse")
 				return
 			}
 			if d.RaftGroup.Raft.PendingConfIndex > d.peerStorage.AppliedIndex() {
@@ -553,7 +526,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 			cb:    cb,
 		}
 		d.proposals = append(d.proposals, &proposal)
-		log.Debugf("get request peer:%v requestType:%v", d.peer.Tag, msg.Requests[0].CmdType)
+		//log.Debugf("get request peer:%v requestType:%v", d.peer.Tag, msg.Requests[0].CmdType)
 		d.RaftGroup.Propose(data)
 	}
 }
@@ -745,7 +718,7 @@ func handleStaleMsg(trans Transport, msg *rspb.RaftMessage, curEpoch *metapb.Reg
 		IsTombstone: true,
 	}
 	if err := trans.Send(gcMsg); err != nil {
-		log.Infof("[region %d] send message fai-led %v", regionID, err)
+		log.Errorf("[region %d] send message failed %v", regionID, err)
 	}
 }
 
@@ -838,8 +811,7 @@ func (d *peerMsgHandler) destroyPeer() {
 	d.ctx.router.close(regionID)
 	d.stopped = true
 	if isInitialized && meta.regionRanges.Delete(&regionItem{region: d.Region()}) == nil {
-		log.Error("%v delete :%v fail", d.Tag, d.Region())
-		panic(d.Tag + " meta corruption detected, delete")
+		panic(d.Tag + " meta corruption detected")
 	}
 	if _, ok := meta.regions[regionID]; !ok {
 		panic(d.Tag + " meta corruption detected")
