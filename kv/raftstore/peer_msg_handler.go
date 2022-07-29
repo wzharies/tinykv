@@ -57,8 +57,13 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		storeMeta := d.ctx.storeMeta
 		storeMeta.Lock()
 		storeMeta.regions[applyResult.Region.GetId()] = applyResult.Region
-		storeMeta.regionRanges.Delete(&regionItem{region: applyResult.PrevRegion})
+		if d.isInitialized() {
+			storeMeta.regionRanges.Delete(&regionItem{region: applyResult.PrevRegion})
+		}
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: applyResult.Region})
+		log.Infof("%v delete region :%v", d.Tag, applyResult.PrevRegion)
+		log.Infof("%v add region :%v", d.Tag, applyResult.Region)
+		log.Infof("%v range: %v", d.Tag, storeMeta.regionRanges)
 		storeMeta.Unlock()
 		d.peerStorage.SetRegion(applyResult.Region)
 	}
@@ -311,6 +316,15 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 			d.handleProposal(entry, msg, ErrResp(err), nil)
 			return kvWb
 		}
+		if len(splitReq.NewPeerIds) != len(region.Peers) {
+			log.Error("peer count not equal")
+			if d.IsLeader() {
+				d.HeartbeatScheduler(d.ctx.schedulerTaskSender)
+			}
+			errors := fmt.Errorf("peer count not equal")
+			d.handleProposal(entry, msg, ErrResp(errors), nil)
+			return kvWb
+		}
 
 		newRegion := new(metapb.Region)
 		util.CloneMsg(region, newRegion)
@@ -326,11 +340,15 @@ func (d *peerMsgHandler) handleAdminProposal(entry eraftpb.Entry, msg *raft_cmdp
 		storeMeta := d.ctx.storeMeta
 		storeMeta.Lock()
 		storeMeta.regionRanges.Delete(&regionItem{region: region})
+		log.Infof("%v delete region :%v", d.Tag, region)
 		storeMeta.regions[newRegion.Id] = newRegion
 		region.EndKey = splitReq.SplitKey
 		region.RegionEpoch.Version += 1
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: region})
 		storeMeta.regionRanges.ReplaceOrInsert(&regionItem{region: newRegion})
+		log.Infof("%v add region :%v", d.Tag, region)
+		log.Infof("%v add region :%v", d.Tag, newRegion)
+		log.Infof("%v range: %v", d.Tag, storeMeta.regionRanges)
 		storeMeta.Unlock()
 		meta.WriteRegionState(kvWb, region, rspb.PeerState_Normal)
 		meta.WriteRegionState(kvWb, newRegion, rspb.PeerState_Normal)
@@ -820,7 +838,8 @@ func (d *peerMsgHandler) destroyPeer() {
 	d.ctx.router.close(regionID)
 	d.stopped = true
 	if isInitialized && meta.regionRanges.Delete(&regionItem{region: d.Region()}) == nil {
-		panic(d.Tag + " meta corruption detected")
+		log.Error("%v delete :%v fail", d.Tag, d.Region())
+		panic(d.Tag + " meta corruption detected, delete")
 	}
 	if _, ok := meta.regions[regionID]; !ok {
 		panic(d.Tag + " meta corruption detected")
