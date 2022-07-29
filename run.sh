@@ -2,5 +2,5 @@
 for ((i=1;i<=50;i++));
 do
 	echo "ROUND $i";
-	make project3b >> out3b-3.log;
+	make project3b >> out3b-5.log;
 done

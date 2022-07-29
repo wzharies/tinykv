@@ -189,7 +189,7 @@ func newRaft(c *Config) *Raft {
 		electionTimeout:  c.ElectionTick,
 	}
 	lastIndex := r.RaftLog.LastIndex()
-	log.Infof("new raft :%v index :%v term :%v", r.id, lastIndex, r.Term)
+	//log.Infof("new raft :%v index :%v term :%v", r.id, lastIndex, r.Term)
 	if c.peers == nil {
 		c.peers = confState.Nodes
 	}
@@ -455,12 +455,12 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
-	log.Infof("%v becomeLeader, term: %v", r.id, r.Term)
-	for index, isvote := range r.votes {
-		if isvote {
-			log.Infof("%v vote to %v", index, r.id)
-		}
-	}
+	// log.Infof("%v becomeLeader, term: %v", r.id, r.Term)
+	// for index, isvote := range r.votes {
+	// 	if isvote {
+	// 		log.Infof("%v vote to %v", index, r.id)
+	// 	}
+	// }
 	r.State = StateLeader
 	r.Lead = r.id
 	for _, p := range r.Prs {
@@ -569,9 +569,9 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		return
 	}
 
-	if m.From != r.Lead {
-		log.Infof("from %v to %v term %v, my lead :%v term :%v", m.From, m.To, m.Term, r.Lead, r.Term)
-	}
+	// if m.From != r.Lead {
+	// 	log.Infof("from %v to %v term %v, my lead :%v term :%v", m.From, m.To, m.Term, r.Lead, r.Term)
+	// }
 
 	//重置选举时间
 	r.becomeFollower(m.Term, m.From)
@@ -641,7 +641,7 @@ func (r *Raft) handleAppendResponse(m pb.Message) {
 
 func (r *Raft) handlePropose(m pb.Message) {
 	if r.leadTransferee != None {
-		log.Debug("handlePropose leadTransferee != None")
+		//log.Debug("handlePropose leadTransferee != None")
 		return
 	}
 	r.appendEntry(m.Entries...)
@@ -657,9 +657,9 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 		return
 	}
 
-	if m.From != r.Lead {
-		log.Infof("heartbead from %v to %v term %v, my lead :%v term :%v", m.From, m.To, m.Term, r.Lead, r.Term)
-	}
+	// if m.From != r.Lead {
+	// 	log.Infof("heartbead from %v to %v term %v, my lead :%v term :%v", m.From, m.To, m.Term, r.Lead, r.Term)
+	// }
 
 	//重设选举时间
 	r.becomeFollower(m.Term, m.From)
@@ -709,7 +709,7 @@ func (r *Raft) handleRequestVote(m pb.Message) {
 			r.sendRequestVoteResponse(m.From, true)
 			return
 		}
-		log.Infof("%v vote to %v term: %v, lastIndex :%v lastTerm :%v, m.Index :%v, m.LogTerm :%v", r.id, m.From, m.Term, lastIndex, lastTerm, m.Index, m.LogTerm)
+		//log.Infof("%v vote to %v term: %v, lastIndex :%v lastTerm :%v, m.Index :%v, m.LogTerm :%v", r.id, m.From, m.Term, lastIndex, lastTerm, m.Index, m.LogTerm)
 		r.Vote = m.From
 		r.sendRequestVoteResponse(m.From, false)
 		return
@@ -725,8 +725,6 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 		if r.votes[m.From] == false {
 			r.votes[m.From] = true
 			r.granted++
-		} else {
-			log.Debugf("get repeat vote")
 		}
 	} else {
 		//拒绝收到重复投票的话会提前终止选举。
